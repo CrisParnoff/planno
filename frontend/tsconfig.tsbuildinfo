@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/Layout.tsx","./src/components/WeekCalendar.tsx","./src/lib/api.ts","./src/lib/auth.tsx","./src/lib/supabase.ts","./src/lib/types.ts","./src/lib/week.ts","./src/pages/Errors.tsx","./src/pages/Home.tsx","./src/pages/Login.tsx","./src/pages/Planner.tsx","./src/pages/Simulados.tsx"],"version":"5.9.3"}

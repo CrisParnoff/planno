@@ -1,0 +1,21 @@
+name: Rollover de sábado
+
+# Sábado 00h01 no horário de Brasília (UTC-3, sem horário de verão desde 2019)
+# 00h01 BRT = 03h01 UTC. GitHub Actions usa UTC.
+on:
+  schedule:
+    - cron: "1 3 * * 6"
+  workflow_dispatch: {} # permite disparar manualmente pela aba Actions
+
+jobs:
+  rollover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar endpoint de rollover
+        run: |
+          code=$(curl -s -o /tmp/out.json -w "%{http_code}" \
+            -X POST "${{ secrets.BACKEND_URL }}/internal/cron/rollover" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}")
+          echo "HTTP $code"
+          cat /tmp/out.json
+          test "$code" = "200"
