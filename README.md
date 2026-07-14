@@ -1,4 +1,4 @@
-# Med Study Planner
+# Planno
 
 Aplicação web multi-tenant para organizar a semana de estudos de quem está se
 preparando para o vestibular de medicina. Puxa a Google Agenda, distribui
