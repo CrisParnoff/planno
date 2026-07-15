@@ -39,6 +39,7 @@ class CurrentUser:
     """
 
     def __init__(self, user_id: str, email: str):
+        """Guarda o id (claim ``sub``) e o email do usuário verificado."""
         self.id = user_id
         self.email = email
 

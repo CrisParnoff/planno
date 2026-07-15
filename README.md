@@ -34,8 +34,12 @@ o vestibular:
 - **Simulados:** registro de nome, questões e acertos, com percentual calculado
   automaticamente e histórico.
 - **Tela principal:** atalhos, data/hora e a semana em modo acompanhamento.
-- **Rollover de sábado:** toda semana, as pendências não concluídas são
-  consolidadas na semana seguinte e marcadas como atrasadas.
+- **Rollover automático (atrasados):** no **sábado**, as tarefas não concluídas
+  da semana são realocadas no bloco de "Pendências da semana" (o que couber) e o
+  excedente passa para a semana seguinte; na **segunda**, o que ficou incompleto
+  é trazido para a nova semana. Tudo marcado como atrasado.
+- **Acesso controlado:** login com Google restrito a emails autorizados; quem
+  não está na lista vê uma tela de "sem permissão".
 
 ---
 
@@ -51,24 +55,31 @@ o vestibular:
 | **Infra / deploy** | Frontend na **Vercel**, backend na **Render** (Docker), banco/auth na **Supabase**, cron na **GitHub Actions** |
 
 Resumo: **React/TS (Vite) na Vercel + FastAPI (Python) na Render + PostgreSQL na
-Supabase**, com login Google, leitura da Google Agenda e um cron no GitHub
-Actions para o rollover semanal.
+Supabase**, com login Google, leitura da Google Agenda e dois crons no GitHub
+Actions (sábado e segunda) para o rollover de tarefas atrasadas.
 
 ---
 
 ## Como a Google Agenda deve estar organizada
 
-O Planno **lê** a Google Agenda (nunca escreve nela) e decide o papel de cada
-evento pelo **título**. Para o organizador funcionar bem, os eventos precisam
-seguir esta convenção:
+O Planno **lê** a Google Agenda (nunca escreve nela) e considera **todos os
+calendários visíveis** da conta, não só o principal — útil para quem separa cada
+matéria/compromisso em um calendário próprio. O papel de cada evento é decidido
+pelo **título**. Para o organizador funcionar bem, os eventos seguem esta
+convenção:
 
 - **Aulas → título em MAIÚSCULAS** (ex.: `QUÍMICA`, `BIOLOGIA`).
   São blocos fixos: o Planno **nunca** aloca tarefas em cima de uma aula.
 - **Horários de estudo → título em minúsculas** (ex.: `quimica`, `biologia`).
   São os espaços onde o Planno encaixa as tarefas. O título indica a matéria do
   bloco: uma tarefa de Química é alocada num bloco `quimica`.
-- **Simulados → título contendo "simulado"** (ex.: `Simulado ENEM`).
-  Aparecem destacados na visão da semana.
+- **Bloco de simulado → minúsculas com "simulado"** (ex.: `simulado`,
+  `simulado fisica`). É um horário de estudo que **só recebe tarefas que citem
+  "simulado"** (na etiqueta ou na descrição). Um `SIMULADO` em maiúsculas é
+  tratado como sessão fixa (não recebe tarefas).
+- **Bloco de pendências → título contendo "pendências"** (ex.:
+  `PENDÊNCIAS DA SEMANA`, em qualquer caixa). Fica reservado durante a semana e é
+  usado pelo rollover de sábado para acomodar as tarefas atrasadas.
 - **Outros compromissos → título misto** (ex.: `Academia`, `Consulta médica`).
   São tratados como ocupados: o Planno não aloca tarefas nesses horários, mas
   também não os trata como bloco de estudo.
@@ -79,7 +90,9 @@ Regras de alocação, em resumo:
 2. A matéria da tarefa precisa bater com a matéria do bloco (comparação sem
    acentos e sem diferença de maiúsculas). Tarefas sem matéria podem usar
    blocos genéricos.
-3. Tarefas mais longas são alocadas primeiro (heurística *first-fit
+3. **Blocos de simulado** só aceitam tarefas de simulado — e tarefas de simulado
+   só entram em blocos de simulado.
+4. Tarefas mais longas são alocadas primeiro (heurística *first-fit
    decreasing*), aproveitando melhor cada bloco.
 
 > **Sem horários na Google Agenda?** Não tem problema. Dá para criar **blocos de
@@ -166,7 +179,7 @@ planno/
 │       ├── lib/         # supabase, api, auth, types, week
 │       ├── components/  # Layout, WeekCalendar, Modal, dialogs, Logo
 │       └── pages/       # Home, Planner, Errors, Simulados, Login, NoAccess
-├── .github/workflows/   # cron do rollover de sábado
+├── .github/workflows/   # crons de rollover (sábado e segunda)
 └── docker-compose.yml
 ```
 

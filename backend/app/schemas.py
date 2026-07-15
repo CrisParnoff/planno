@@ -31,6 +31,7 @@ class ErrorEntryCreate(BaseModel):
     @field_validator("error_type")
     @classmethod
     def _valid_type(cls, v):
+        """Normaliza e valida o tipo de erro."""
         v = str(v).strip().lower()
         if v not in ERROR_TYPES:
             raise ValueError("error_type deve ser 'conteudo', 'atencao' ou 'interpretacao'.")
@@ -39,6 +40,7 @@ class ErrorEntryCreate(BaseModel):
     @field_validator("exam", "area", "subject", "topic")
     @classmethod
     def _strip(cls, v):
+        """Remove espaços nas bordas dos campos de texto."""
         return v.strip() if isinstance(v, str) else v
 
 
@@ -61,6 +63,7 @@ class ErrorEntryOut(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def _id_str(cls, v):
+        """Serializa o ``id`` (UUID) como string."""
         return _to_str(v)
 
 
@@ -131,6 +134,7 @@ class SimuladoCreate(BaseModel):
     @field_validator("num_correct")
     @classmethod
     def correct_not_more_than_questions(cls, v, info):
+        """Garante que os acertos não excedem o número de questões."""
         q = info.data.get("num_questions")
         if q is not None and v > q:
             raise ValueError("num_correct não pode ser maior que num_questions.")
@@ -152,11 +156,13 @@ class SimuladoOut(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def _id_str(cls, v):
+        """Serializa o ``id`` (UUID) como string."""
         return _to_str(v)
 
     @field_validator("percent", mode="before")
     @classmethod
     def _pct_float(cls, v):
+        """Converte o percentual (Decimal) para float."""
         return float(v) if v is not None else v
 
 
@@ -178,6 +184,7 @@ class LabelOut(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def _id_str(cls, v):
+        """Serializa o ``id`` (UUID) como string."""
         return _to_str(v)
 
 
@@ -266,6 +273,7 @@ class StudyBlockCreate(BaseModel):
     @field_validator("end")
     @classmethod
     def end_after_start(cls, v, info):
+        """Garante que o horário de fim é posterior ao de início."""
         start = info.data.get("start")
         if start and _hhmm_to_min(v) <= _hhmm_to_min(start):
             raise ValueError("O horário de fim deve ser depois do início.")

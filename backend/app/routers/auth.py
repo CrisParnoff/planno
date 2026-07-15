@@ -16,4 +16,5 @@ router = APIRouter(prefix="/api", tags=["auth"])
 
 @router.get("/me")
 def me(user: CurrentUser = Depends(get_current_user)):
+    """Confirma o acesso do usuário logado (200 = autorizado; 403 = fora da whitelist)."""
     return {"email": user.email, "authorized": True}
