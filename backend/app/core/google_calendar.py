@@ -1,7 +1,8 @@
 """Cliente somente-leitura da Google Calendar API.
 
 Usa o refresh token do usuário (guardado criptografado) para obter um access
-token e listar os eventos da semana, classificando cada evento pelo título:
+token e listar os eventos da semana de **todos os calendários visíveis** do
+usuário (não só o principal), classificando cada evento pelo título:
 
 * título em MAIÚSCULAS -> ``aula`` (bloco fixo, nunca sobrescrito);
 * título em minúsculas -> ``estudo`` (bloco onde as tarefas são alocadas);
@@ -13,13 +14,15 @@ from __future__ import annotations
 import hashlib
 import time
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
 
 from ..config import settings
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-CALENDAR_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
+CALENDAR_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
 
 # Cache de access tokens (sha256(refresh) -> (access, expira_em)). O token do
 # Google vale ~1h; guardamos por menos para nunca usar um vencido, evitando um
@@ -99,22 +102,36 @@ def classify_event(title: str) -> tuple[str, str | None]:
     return "outro", t
 
 
-def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime) -> list[dict]:
-    """Lista os eventos da agenda no intervalo informado.
-
-    Args:
-        refresh_token: Refresh token OAuth do usuário.
-        time_min: Início do intervalo (datetime com timezone).
-        time_max: Fim do intervalo (datetime com timezone).
+def _list_calendar_ids(access_token: str) -> list[str]:
+    """Lista os IDs dos calendários visíveis do usuário.
 
     Returns:
-        Lista de eventos com ``id``, ``title``, ``start``, ``end``, ``kind`` e
-        ``subject``. Eventos de dia inteiro são ignorados.
+        IDs dos calendários com ``selected != false``; ``["primary"]`` como
+        fallback se a listagem falhar ou vier vazia.
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        resp = httpx.get(CALENDAR_LIST_URL, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        return ["primary"]
+    ids = [
+        item["id"]
+        for item in resp.json().get("items", [])
+        if item.get("id") and item.get("selected", True)
+    ]
+    return ids or ["primary"]
+
+
+def _events_for_calendar(
+    access_token: str, calendar_id: str, time_min: datetime, time_max: datetime
+) -> list[dict]:
+    """Lista os eventos de um único calendário no intervalo informado.
 
     Raises:
-        GoogleCalendarError: Se a leitura da agenda falhar.
+        GoogleCalendarError: Se a leitura do calendário falhar.
     """
-    access_token = get_access_token(refresh_token)
+    url = CALENDAR_EVENTS_URL.format(calendar_id=quote(calendar_id, safe=""))
     params = {
         "timeMin": time_min.isoformat(),
         "timeMax": time_max.isoformat(),
@@ -124,7 +141,7 @@ def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime)
     }
     headers = {"Authorization": f"Bearer {access_token}"}
     try:
-        resp = httpx.get(CALENDAR_EVENTS_URL, params=params, headers=headers, timeout=20)
+        resp = httpx.get(url, params=params, headers=headers, timeout=20)
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise GoogleCalendarError("Falha ao ler eventos do Google Calendar.") from exc
@@ -147,4 +164,27 @@ def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime)
                 "subject": subject,
             }
         )
+    return events
+
+
+def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime) -> list[dict]:
+    """Lista os eventos de todos os calendários do usuário no intervalo.
+
+    Args:
+        refresh_token: Refresh token OAuth do usuário.
+        time_min: Início do intervalo (datetime com timezone).
+        time_max: Fim do intervalo (datetime com timezone).
+
+    Returns:
+        Eventos de todos os calendários visíveis, cada um com ``id``, ``title``,
+        ``start``, ``end``, ``kind`` e ``subject``. Eventos de dia inteiro são
+        ignorados.
+
+    Raises:
+        GoogleCalendarError: Se a leitura de algum calendário falhar.
+    """
+    access_token = get_access_token(refresh_token)
+    events: list[dict] = []
+    for calendar_id in _list_calendar_ids(access_token):
+        events.extend(_events_for_calendar(access_token, calendar_id, time_min, time_max))
     return events
