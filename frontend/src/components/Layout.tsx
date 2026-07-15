@@ -119,7 +119,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           </button>
         </div>
       </aside>
-      <main className="main">{children}</main>
+      <main className="main">
+        <div className="main-inner">{children}</div>
+      </main>
     </div>
   );
 }

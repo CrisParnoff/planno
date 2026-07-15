@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 /** Modal genérico: backdrop, Esc para fechar, clique fora fecha,
  *  foco preso no diálogo enquanto aberto. */
@@ -36,7 +37,9 @@ export default function Modal({
     };
   }, [onClose]);
 
-  return (
+  // Renderiza no body (portal): fica sempre centralizado na tela, sem ser
+  // afetado por transform/animação de nenhum elemento pai.
+  return createPortal(
     <div
       className="backdrop"
       onMouseDown={(e) => {
@@ -54,6 +57,7 @@ export default function Modal({
         {children}
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

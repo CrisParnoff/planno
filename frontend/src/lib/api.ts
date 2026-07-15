@@ -25,6 +25,16 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Erro de API que carrega o status HTTP (ex.: 403 = sem permissão).
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function doFetch<T>(path: string, init: RequestInit): Promise<T> {
   const headers = new Headers(init.headers);
   const auth = await authHeader();
@@ -34,7 +44,7 @@ async function doFetch<T>(path: string, init: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body?.detail || `Erro ${res.status}`);
+    throw new ApiError(res.status, body?.detail || `Erro ${res.status}`);
   }
   return body as T;
 }
@@ -52,6 +62,11 @@ let cacheEpoch = 0;
 function invalidateCache() {
   getCache.clear();
   cacheEpoch++;
+}
+
+// Limpa o cache ao trocar de sessão/usuário (evita reaproveitar dados de outra conta).
+export function clearApiCache() {
+  invalidateCache();
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -92,6 +107,9 @@ function json(body: unknown): RequestInit {
 }
 
 export const api = {
+  // ---- acesso / whitelist ----
+  me: () => request<{ email: string; authorized: boolean }>("/api/me"),
+
   // ---- caderno de erros ----
   errorOverview: () => request<ErrorOverview>("/api/errors/overview"),
   listErrorEntries: (params?: {

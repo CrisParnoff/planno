@@ -17,7 +17,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .config import settings
-from .routers import calendar, cron, errors, labels, planner, simulados
+from .routers import auth, calendar, cron, errors, labels, planner, simulados
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 
@@ -69,6 +69,7 @@ def health():
     return {"status": "ok", "env": settings.ENV}
 
 
+app.include_router(auth.router)
 app.include_router(errors.router)
 app.include_router(simulados.router)
 app.include_router(labels.router)
