@@ -11,7 +11,11 @@ import type {
   WeekView,
 } from "./types";
 
-const API_URL = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
+// Remove barra(s) no final para nunca gerar URL com barra dupla (ex.: //api/...).
+const API_URL = ((import.meta.env.VITE_API_URL as string) || "http://localhost:8000").replace(
+  /\/+$/,
+  ""
+);
 
 async function authHeader(): Promise<Record<string, string>> {
   const {

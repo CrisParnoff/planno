@@ -52,7 +52,14 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> List[str]:
-        return [o.strip() for o in self.FRONTEND_ORIGINS.split(",") if o.strip()]
+        # Normaliza: tira espaços e barra(s) no final, para casar com a origem
+        # que o navegador envia (ex.: "https://app.vercel.app", sem barra).
+        origins = []
+        for o in self.FRONTEND_ORIGINS.split(","):
+            o = o.strip().rstrip("/")
+            if o:
+                origins.append(o)
+        return origins
 
     @property
     def is_production(self) -> bool:
