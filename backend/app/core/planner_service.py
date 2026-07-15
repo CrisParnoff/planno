@@ -1,14 +1,13 @@
-"""Lógica de planejamento: junta agenda (Google) + blocos de estudo criados no
-app + tarefas + motor de alocação, deriva o status 'atrasado' e faz o rollover.
+"""Lógica de planejamento da semana.
 
-Princípio (decisão do conselho): o estado 'atrasado' é DERIVADO na leitura
-(função de data), então o app nunca mente sobre o estado — mesmo que o cron
-falhe. O cron de sábado apenas MATERIALIZA o movimento (conveniência de UX).
+Junta a agenda do Google, os blocos de estudo criados no app e as tarefas,
+aciona o motor de alocação, deriva o estado "atrasado" e faz o rollover.
 
-Blocos de estudo podem vir de DUAS fontes:
-  1. Google Calendar: eventos com título em minúsculas (kind='estudo').
-  2. Tabela study_blocks: criados dentro do app (recorrentes por dia da semana),
-     úteis para quem não tem horários de estudo na agenda.
+O estado "atrasado" é derivado na leitura (em função da data atual), então o
+app nunca fica inconsistente mesmo que o cron falhe; o cron de sábado apenas
+materializa o movimento das tarefas. Os blocos de estudo vêm de duas fontes:
+eventos do Google com título em minúsculas e a tabela ``study_blocks``
+(recorrentes, para quem não tem horários na agenda).
 """
 from __future__ import annotations
 
@@ -32,23 +31,33 @@ from .scheduling import normalize_subject, organize, subtract_busy
 TZ = ZoneInfo(settings.APP_TIMEZONE)
 
 
-# ---------------------------------------------------------------- datas
 def monday_of(d: date) -> date:
+    """Retorna a segunda-feira da semana da data informada."""
     return d - timedelta(days=d.weekday())
 
 
 def week_bounds(week_start: date) -> tuple[datetime, datetime]:
+    """Retorna o início e o fim (exclusivo) da semana, com timezone."""
     start = datetime.combine(week_start, time.min, tzinfo=TZ)
     end = start + timedelta(days=7)
     return start, end
 
 
 def now_local() -> datetime:
+    """Momento atual no fuso configurado (``APP_TIMEZONE``)."""
     return datetime.now(TZ)
 
 
-# ---------------------------------------------------------------- status derivado
 def effective_status(task: Task, now: datetime | None = None) -> str:
+    """Deriva o estado exibido de uma tarefa.
+
+    Args:
+        task: Tarefa a avaliar.
+        now: Momento de referência (usa :func:`now_local` se omitido).
+
+    Returns:
+        "done", "atrasado" ou "pending".
+    """
     now = now or now_local()
     if task.status == "done":
         return "done"
@@ -59,22 +68,25 @@ def effective_status(task: Task, now: datetime | None = None) -> str:
     return "pending"
 
 
-# ---------------------------------------------------------------- agenda (Google)
 def _connection(db: Session, user_id: uuid.UUID) -> CalendarConnection | None:
+    """Retorna a conexão de agenda do usuário, se houver."""
     return db.execute(
         select(CalendarConnection).where(CalendarConnection.user_id == user_id)
     ).scalar_one_or_none()
 
 
-# Cache curto dos eventos da agenda por (usuário, semana). Sem isso, cada
-# leitura da semana bate no Google — e o front chama /week a cada toque em
-# uma tarefa. TTL pequeno mantém os dados praticamente atuais.
+# Cache curto dos eventos por (usuário, semana). Evita bater no Google a cada
+# leitura da semana (o front chama /week a cada interação com tarefas).
 _EVENTS_TTL = 90  # segundos
 _events_cache: dict[tuple[str, str], tuple[list[dict], float]] = {}
 
 
 def invalidate_events_cache(user_id: uuid.UUID | None = None) -> None:
-    """Zera o cache de eventos (ex.: ao (re)conectar a agenda)."""
+    """Limpa o cache de eventos.
+
+    Args:
+        user_id: Se informado, limpa só as entradas do usuário; senão, tudo.
+    """
     if user_id is None:
         _events_cache.clear()
         return
@@ -84,6 +96,11 @@ def invalidate_events_cache(user_id: uuid.UUID | None = None) -> None:
 
 
 def fetch_events(db: Session, user_id: uuid.UUID, week_start: date) -> list[dict]:
+    """Retorna os eventos da agenda do Google para a semana, usando cache.
+
+    Returns:
+        Lista de eventos, ou lista vazia se o usuário não conectou a agenda.
+    """
     conn = _connection(db, user_id)
     if conn is None:
         return []
@@ -100,8 +117,8 @@ def fetch_events(db: Session, user_id: uuid.UUID, week_start: date) -> list[dict
     return events
 
 
-# ---------------------------------------------------------------- blocos de estudo
 def _trim(block: SchedBlock, not_before: datetime | None) -> SchedBlock | None:
+    """Corta o início do bloco para não começar antes de ``not_before``."""
     if not_before is None:
         return block
     if block.end <= not_before:
@@ -112,6 +129,7 @@ def _trim(block: SchedBlock, not_before: datetime | None) -> SchedBlock | None:
 
 
 def _calendar_study_blocks(events: list[dict], not_before: datetime | None) -> list[SchedBlock]:
+    """Extrai os blocos de estudo (kind='estudo') dos eventos do Google."""
     out: list[SchedBlock] = []
     for ev in events:
         if ev["kind"] != "estudo":
@@ -128,12 +146,12 @@ def _calendar_study_blocks(events: list[dict], not_before: datetime | None) -> l
 
 
 def _db_study_rows(db: Session, user_id: uuid.UUID) -> list[StudyBlock]:
+    """Retorna os blocos de estudo do app; degrada se a tabela não existir."""
     try:
         return db.execute(
             select(StudyBlock).where(StudyBlock.user_id == user_id)
         ).scalars().all()
     except ProgrammingError:
-        # Tabela ainda não criada (migração não rodada): degrada sem quebrar.
         db.rollback()
         return []
 
@@ -141,6 +159,7 @@ def _db_study_rows(db: Session, user_id: uuid.UUID) -> list[StudyBlock]:
 def _db_study_blocks(
     db: Session, user_id: uuid.UUID, week_start: date, not_before: datetime | None
 ) -> list[SchedBlock]:
+    """Converte os blocos recorrentes do app em blocos concretos da semana."""
     out: list[SchedBlock] = []
     for r in _db_study_rows(db, user_id):
         d = week_start + timedelta(days=r.weekday)
@@ -153,7 +172,7 @@ def _db_study_blocks(
 
 
 def db_study_block_events(db: Session, user_id: uuid.UUID, week_start: date) -> list[dict]:
-    """Blocos do app no formato de evento, para render na visão semanal."""
+    """Retorna os blocos do app no formato de evento, para a visão semanal."""
     events: list[dict] = []
     for r in _db_study_rows(db, user_id):
         d = week_start + timedelta(days=r.weekday)
@@ -173,7 +192,7 @@ def db_study_block_events(db: Session, user_id: uuid.UUID, week_start: date) -> 
 
 
 def has_any_study_time(db: Session, user_id: uuid.UUID, week_start: date) -> bool:
-    """Existe algum bloco de estudo (Google ou app) para a semana?"""
+    """Indica se há algum bloco de estudo (Google ou app) na semana."""
     if _db_study_rows(db, user_id):
         return True
     try:
@@ -183,8 +202,8 @@ def has_any_study_time(db: Session, user_id: uuid.UUID, week_start: date) -> boo
     return any(e["kind"] == "estudo" for e in events)
 
 
-# ---------------------------------------------------------------- organizar
 def _label_key(task: Task) -> str:
+    """Chave normalizada da matéria da tarefa (vazia se sem etiqueta)."""
     if task.label is not None:
         return normalize_subject(task.label.name)
     return ""
@@ -198,13 +217,22 @@ def organize_week(
     only_unscheduled: bool = False,
     not_before: datetime | None = None,
 ) -> dict:
-    """Aloca tarefas da semana nos blocos de estudo (Google + app).
+    """Aloca as tarefas da semana nos blocos de estudo (Google + app).
 
-    Garantias:
-      * Nunca aloca no passado: o piso é sempre max(not_before, agora).
-      * Nunca sobrepõe horários já ocupados — tarefas que mantêm o horário
-        (concluídas, ou fora da seleção) e eventos da agenda que não são
-        blocos de estudo são subtraídos dos blocos antes da alocação.
+    Nunca aloca no passado (o piso é ``max(not_before, agora)``) e nunca
+    sobrepõe horários já ocupados: tarefas que mantêm o horário e eventos de
+    agenda que não são blocos de estudo são descontados antes da alocação.
+
+    Args:
+        db: Sessão do banco.
+        user_id: Dono das tarefas.
+        week_start: Segunda-feira da semana.
+        task_ids: Se informado, aloca apenas essas tarefas.
+        only_unscheduled: Se ``True``, ignora tarefas já alocadas.
+        not_before: Piso mínimo de horário para a alocação.
+
+    Returns:
+        ``{"scheduled": int, "unscheduled": list[str]}``.
     """
     now = now_local()
     not_before = max(not_before, now) if not_before is not None else now
@@ -233,8 +261,8 @@ def organize_week(
             continue
         selected.append(t)
 
-    # intervalos ocupados: tarefas que NÃO serão realocadas mas têm horário
-    # (ex.: concluídas) + eventos da agenda que não são blocos de estudo.
+    # Intervalos ocupados: tarefas mantidas com horário + eventos que não são
+    # blocos de estudo.
     selected_ids = {t.id for t in selected}
     busy: list[tuple[datetime, datetime]] = []
     for t in tasks:
@@ -273,8 +301,21 @@ def organize_week(
     return {"scheduled": len(scheduled_ids), "unscheduled": result.unscheduled}
 
 
-# ---------------------------------------------------------------- rollover de sábado
 def rollover_user(db: Session, user_id: uuid.UUID, now: datetime | None = None) -> dict:
+    """Rola pendências das semanas anteriores para a semana atual.
+
+    Tarefas não concluídas de semanas passadas são movidas para a segunda-feira
+    atual e marcadas como atrasadas; em seguida, as ainda não alocadas são
+    reorganizadas.
+
+    Args:
+        db: Sessão do banco.
+        user_id: Usuário a processar.
+        now: Momento de referência (usa :func:`now_local` se omitido).
+
+    Returns:
+        ``{"rolled_from_previous_weeks": int}``.
+    """
     now = now or now_local()
     current_monday = monday_of(now.date())
 

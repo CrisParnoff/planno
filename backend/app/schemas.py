@@ -1,5 +1,7 @@
-"""Schemas Pydantic (validação de entrada/saída). Nenhum schema aceita
-user_id do cliente — ele vem sempre do token."""
+"""Schemas Pydantic de entrada e saída.
+
+Nenhum schema aceita ``user_id`` do cliente: ele vem sempre do token verificado.
+"""
 from datetime import date, datetime
 from typing import Optional
 
@@ -7,15 +9,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _to_str(v):
-    """Coage UUID (ou qualquer valor) para str, preservando None."""
+    """Converte UUID (ou qualquer valor) para ``str``, preservando ``None``."""
     return str(v) if v is not None else None
 
 
-# ---------- Caderno de erros ----------
 ERROR_TYPES = ("conteudo", "atencao", "interpretacao")
 
 
 class ErrorEntryCreate(BaseModel):
+    """Dados para cadastrar um erro no caderno."""
+
     exam: Optional[str] = Field(default=None, max_length=120)
     error_date: Optional[date] = None
     question: Optional[int] = Field(default=None, ge=0, le=10000)
@@ -40,6 +43,8 @@ class ErrorEntryCreate(BaseModel):
 
 
 class ErrorEntryOut(BaseModel):
+    """Erro do caderno serializado para o cliente."""
+
     model_config = ConfigDict(from_attributes=True)
     id: str
     exam: Optional[str]
@@ -60,46 +65,64 @@ class ErrorEntryOut(BaseModel):
 
 
 class ErrorRedoUpdate(BaseModel):
+    """Atualização do estado "refeita" de um erro."""
+
     redone: bool
 
 
-# ----- Insights / visão geral -----
 class TypeStat(BaseModel):
-    type: str          # 'conteudo' | 'atencao' | 'interpretacao'
+    """Contagem e participação (0..1) de um tipo de erro."""
+
+    type: str
     count: int
-    share: float       # 0..1
+    share: float
 
 
 class TopTopic(BaseModel):
+    """Assunto e quantas vezes aparece."""
+
     topic: str
     count: int
 
 
 class SubjectStat(BaseModel):
+    """Estatísticas de erros de uma matéria.
+
+    Attributes:
+        share: Participação da matéria no total (0..1).
+        top_topic: Assunto que mais erra dentro da matéria.
+        top_type: Tipo de erro predominante na matéria.
+    """
+
     subject: str
     count: int
-    share: float       # 0..1 do total
-    top_topic: Optional[TopTopic] = None      # assunto que mais erra nessa matéria
-    top_type: Optional[str] = None            # tipo de erro predominante nessa matéria
+    share: float
+    top_topic: Optional[TopTopic] = None
+    top_type: Optional[str] = None
 
 
 class EvolutionBucket(BaseModel):
+    """Quantidade de erros em uma semana."""
+
     week_start: date
     count: int
 
 
 class ErrorOverview(BaseModel):
+    """Resumo de insights do caderno de erros."""
+
     total: int
     pending_redo: int
     by_type: list[TypeStat]
     by_subject: list[SubjectStat]
-    worst_subject: Optional[str] = None       # matéria que mais precisa de atenção
+    worst_subject: Optional[str] = None
     worst_topic_overall: Optional[TopTopic] = None
     evolution: list[EvolutionBucket]
 
 
-# ---------- Simulados ----------
 class SimuladoCreate(BaseModel):
+    """Dados para registrar um simulado."""
+
     name: str = Field(min_length=1, max_length=200)
     num_questions: int = Field(gt=0, le=1000)
     num_correct: int = Field(ge=0, le=1000)
@@ -115,6 +138,8 @@ class SimuladoCreate(BaseModel):
 
 
 class SimuladoOut(BaseModel):
+    """Simulado serializado para o cliente."""
+
     model_config = ConfigDict(from_attributes=True)
     id: str
     name: str
@@ -135,13 +160,16 @@ class SimuladoOut(BaseModel):
         return float(v) if v is not None else v
 
 
-# ---------- Labels ----------
 class LabelCreate(BaseModel):
+    """Dados para criar uma etiqueta."""
+
     name: str = Field(min_length=1, max_length=80)
     color: str = Field(default="#7458d6", max_length=20)
 
 
 class LabelOut(BaseModel):
+    """Etiqueta serializada para o cliente."""
+
     model_config = ConfigDict(from_attributes=True)
     id: str
     name: str
@@ -153,8 +181,9 @@ class LabelOut(BaseModel):
         return _to_str(v)
 
 
-# ---------- Tarefas ----------
 class TaskCreate(BaseModel):
+    """Dados para criar uma tarefa de estudo."""
+
     label_id: Optional[str] = None
     description: str = Field(min_length=1, max_length=2000)
     duration_min: int = Field(gt=0, le=600)
@@ -162,6 +191,8 @@ class TaskCreate(BaseModel):
 
 
 class TaskOut(BaseModel):
+    """Tarefa serializada, com o estado efetivo derivado."""
+
     model_config = ConfigDict(from_attributes=True)
     id: str
     label_id: Optional[str]
@@ -176,15 +207,20 @@ class TaskOut(BaseModel):
 
 
 class TaskCheck(BaseModel):
+    """Marca uma tarefa como concluída ou pendente."""
+
     done: bool
 
 
-# ---------- Calendar / Planner ----------
 class CalendarConnectIn(BaseModel):
+    """Refresh token do Google recebido do provider da Supabase."""
+
     provider_refresh_token: str = Field(min_length=10)
 
 
 class CalendarEvent(BaseModel):
+    """Evento da agenda normalizado."""
+
     id: str
     title: str
     start: datetime
@@ -194,27 +230,34 @@ class CalendarEvent(BaseModel):
 
 
 class OrganizeIn(BaseModel):
+    """Parâmetros do organizador de tarefas."""
+
     week_start: date
     task_ids: Optional[list[str]] = None
 
 
 class ReallocateIn(BaseModel):
+    """Novo horário (ou remoção) de uma tarefa alocada."""
+
     task_id: str
     scheduled_start: Optional[datetime] = None
     scheduled_end: Optional[datetime] = None
 
 
-# ---------- Blocos de estudo (criados no app) ----------
 def _hhmm_to_min(v: str) -> int:
+    """Converte "HH:MM" em minutos desde 00:00."""
     h, m = v.split(":")
     return int(h) * 60 + int(m)
 
 
 def _min_to_hhmm(v: int) -> str:
+    """Converte minutos desde 00:00 em "HH:MM"."""
     return f"{v // 60:02d}:{v % 60:02d}"
 
 
 class StudyBlockCreate(BaseModel):
+    """Dados para criar um bloco de estudo recorrente."""
+
     weekday: int = Field(ge=0, le=6, description="0=segunda ... 6=domingo")
     start: str = Field(pattern=r"^\d{2}:\d{2}$")
     end: str = Field(pattern=r"^\d{2}:\d{2}$")
@@ -230,6 +273,8 @@ class StudyBlockCreate(BaseModel):
 
 
 class StudyBlockOut(BaseModel):
+    """Bloco de estudo serializado, com horários em "HH:MM"."""
+
     id: str
     weekday: int
     start: str
@@ -238,6 +283,7 @@ class StudyBlockOut(BaseModel):
 
     @classmethod
     def from_entity(cls, e) -> "StudyBlockOut":
+        """Cria o schema a partir da entidade ORM :class:`models.StudyBlock`."""
         return cls(
             id=str(e.id),
             weekday=e.weekday,

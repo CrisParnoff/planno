@@ -1,8 +1,7 @@
-"""Aba 'Relatório de erros' — caderno de erros digital.
+"""Endpoints do caderno de erros digital.
 
-Cada erro de questão é uma linha (matéria, assunto, tipo de erro, etc.).
-A aba mostra insights no topo (calculados em cima dessas linhas) e a lista
-de erros, além de uma seção "Refazer".
+Cada erro de questão é uma linha (matéria, assunto, tipo de erro, etc.). A aba
+mostra os insights agregados no topo, a lista de erros e a seção "Refazer".
 """
 from __future__ import annotations
 
@@ -27,15 +26,20 @@ router = APIRouter(prefix="/api/errors", tags=["erros"])
 
 
 def _uid(user: CurrentUser) -> uuid.UUID:
+    """UUID do usuário autenticado."""
     return uuid.UUID(user.id)
 
 
 def _get_owned(db: Session, user: CurrentUser, entry_id: str) -> ErrorEntry:
+    """Busca um erro do próprio usuário.
+
+    Raises:
+        HTTPException: 404 se o erro não existir ou não for do usuário.
+    """
     try:
         eid = uuid.UUID(entry_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Erro não encontrado.")
-    # Filtro por user_id: isolamento multi-tenant.
     e = db.execute(
         select(ErrorEntry).where(
             ErrorEntry.id == eid, ErrorEntry.user_id == _uid(user)
@@ -46,13 +50,13 @@ def _get_owned(db: Session, user: CurrentUser, entry_id: str) -> ErrorEntry:
     return e
 
 
-# --------------------------------------------------------------------- CRUD
 @router.post("/entries", response_model=ErrorEntryOut, status_code=status.HTTP_201_CREATED)
 def create_entry(
     body: ErrorEntryCreate,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Cadastra um novo erro no caderno."""
     entity = ErrorEntry(
         user_id=_uid(user),
         exam=body.exam or None,
@@ -79,6 +83,13 @@ def list_entries(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Lista os erros do usuário, com filtros opcionais.
+
+    Args:
+        subject: Filtra por matéria.
+        error_type: Filtra por tipo de erro.
+        pending_redo: Se ``True``, retorna só os ainda não refeitos.
+    """
     stmt = select(ErrorEntry).where(ErrorEntry.user_id == _uid(user))
     if subject:
         stmt = stmt.where(ErrorEntry.subject == subject)
@@ -100,6 +111,7 @@ def set_redone(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Marca um erro como refeito ou pendente."""
     e = _get_owned(db, user, entry_id)
     e.redone = body.redone
     db.commit()
@@ -113,17 +125,18 @@ def delete_entry(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Remove um erro do caderno."""
     e = _get_owned(db, user, entry_id)
     db.delete(e)
     db.commit()
 
 
-# ----------------------------------------------------------------- Insights
 @router.get("/overview", response_model=ErrorOverview)
 def overview(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Retorna os insights agregados dos erros do usuário."""
     rows = db.execute(
         select(ErrorEntry).where(ErrorEntry.user_id == _uid(user))
     ).scalars().all()

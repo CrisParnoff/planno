@@ -1,8 +1,8 @@
-"""Endpoint interno chamado pelo GitHub Actions no sábado 00h01.
+"""Endpoint interno de rollover, chamado pelo GitHub Actions no sábado.
 
-Protegido por um segredo compartilhado (CRON_SECRET) enviado no header
-X-Cron-Secret. Não usa JWT de usuário: roda para TODOS os usuários.
-Usa comparação em tempo constante para evitar timing attacks.
+Protegido por um segredo compartilhado (``CRON_SECRET``) enviado no header
+``X-Cron-Secret`` e comparado em tempo constante. Não usa JWT de usuário:
+processa todos os usuários com tarefas pendentes.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/internal/cron", tags=["cron"])
 
 
 def _authorized(secret: str | None) -> bool:
+    """Compara o segredo recebido com ``CRON_SECRET`` em tempo constante."""
     if not settings.CRON_SECRET or not secret:
         return False
     return hmac.compare_digest(secret, settings.CRON_SECRET)
@@ -27,13 +28,23 @@ def _authorized(secret: str | None) -> bool:
 
 @router.post("/rollover")
 def run_rollover(x_cron_secret: str | None = Header(default=None)):
+    """Executa o rollover semanal para todos os usuários com pendências.
+
+    Args:
+        x_cron_secret: Segredo compartilhado enviado pelo cron.
+
+    Returns:
+        Contagem de usuários processados e de falhas isoladas.
+
+    Raises:
+        HTTPException: 401 se o segredo for inválido ou ausente.
+    """
     if not _authorized(x_cron_secret):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Não autorizado.")
 
     db = SessionLocal()
     processed, errors = 0, 0
     try:
-        # Todos os usuários que têm alguma tarefa pendente.
         user_ids = db.execute(
             select(Task.user_id).where(Task.status != "done").distinct()
         ).scalars().all()

@@ -1,11 +1,12 @@
-"""Cliente mínimo da Google Calendar API (somente leitura).
+"""Cliente somente-leitura da Google Calendar API.
 
 Usa o refresh token do usuário (guardado criptografado) para obter um access
-token e listar os eventos da semana. Classifica cada evento:
-  * TÍTULO EM MAIÚSCULAS  -> 'aula'    (bloco fixo, não pode ser sobrescrito)
-  * título em minúsculas   -> 'estudo'  (bloco onde o algoritmo aloca tarefas)
-  * contém 'simulado'      -> 'simulado'
-  * misto/indefinido       -> 'outro'
+token e listar os eventos da semana, classificando cada evento pelo título:
+
+* título em MAIÚSCULAS -> ``aula`` (bloco fixo, nunca sobrescrito);
+* título em minúsculas -> ``estudo`` (bloco onde as tarefas são alocadas);
+* contém "simulado" -> ``simulado``;
+* misto/indefinido -> ``outro``.
 """
 from __future__ import annotations
 
@@ -20,18 +21,29 @@ from ..config import settings
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 CALENDAR_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
-# Cache de access tokens do Google. O access token vale ~1h; guardamos por
-# um pouco menos para nunca usar um já vencido. Isso evita um round-trip de
-# refresh (200-400ms) a CADA leitura da agenda — o principal gargalo do app.
-_ACCESS_TOKEN_TTL = 3000  # ~50 min
-_token_cache: dict[str, tuple[str, float]] = {}  # sha256(refresh) -> (access, expira_em)
+# Cache de access tokens (sha256(refresh) -> (access, expira_em)). O token do
+# Google vale ~1h; guardamos por menos para nunca usar um vencido, evitando um
+# refresh (200-400 ms) a cada leitura da agenda.
+_ACCESS_TOKEN_TTL = 3000  # segundos (~50 min)
+_token_cache: dict[str, tuple[str, float]] = {}
 
 
 class GoogleCalendarError(RuntimeError):
-    pass
+    """Falha ao renovar o acesso ou ler eventos do Google Calendar."""
 
 
 def get_access_token(refresh_token: str) -> str:
+    """Obtém um access token do Google, usando cache quando possível.
+
+    Args:
+        refresh_token: Refresh token OAuth já descriptografado.
+
+    Returns:
+        Um access token válido.
+
+    Raises:
+        GoogleCalendarError: Se a renovação do token falhar.
+    """
     key = hashlib.sha256(refresh_token.encode()).hexdigest()
     hit = _token_cache.get(key)
     if hit is not None and hit[1] > time.time():
@@ -56,7 +68,16 @@ def get_access_token(refresh_token: str) -> str:
 
 
 def classify_event(title: str) -> tuple[str, str | None]:
-    """Retorna (kind, subject). subject é o título normalizado quando relevante."""
+    """Classifica um evento pelo título.
+
+    Args:
+        title: Título do evento na agenda.
+
+    Returns:
+        A tupla ``(kind, subject)``, onde ``kind`` é um de
+        ``aula``/``estudo``/``simulado``/``outro`` e ``subject`` é o título
+        original quando relevante (senão ``None``).
+    """
     t = (title or "").strip()
     if not t:
         return "outro", None
@@ -79,7 +100,20 @@ def classify_event(title: str) -> tuple[str, str | None]:
 
 
 def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime) -> list[dict]:
-    """Lista eventos entre time_min e time_max (datetimes com timezone)."""
+    """Lista os eventos da agenda no intervalo informado.
+
+    Args:
+        refresh_token: Refresh token OAuth do usuário.
+        time_min: Início do intervalo (datetime com timezone).
+        time_max: Fim do intervalo (datetime com timezone).
+
+    Returns:
+        Lista de eventos com ``id``, ``title``, ``start``, ``end``, ``kind`` e
+        ``subject``. Eventos de dia inteiro são ignorados.
+
+    Raises:
+        GoogleCalendarError: Se a leitura da agenda falhar.
+    """
     access_token = get_access_token(refresh_token)
     params = {
         "timeMin": time_min.isoformat(),
@@ -100,7 +134,7 @@ def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime)
         start = item.get("start", {}).get("dateTime")
         end = item.get("end", {}).get("dateTime")
         if not start or not end:
-            continue  # ignora eventos de dia inteiro
+            continue
         title = item.get("summary", "")
         kind, subject = classify_event(title)
         events.append(

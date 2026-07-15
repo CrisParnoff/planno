@@ -1,9 +1,8 @@
 """Camada de acesso ao banco (SQLAlchemy).
 
-O backend é o único tier confiável: conecta no Postgres da Supabase e é
-responsável por SEMPRE filtrar por user_id. As policies de RLS no banco
-(ver db/schema.sql) são uma segunda camada de defesa, caso alguém tente
-acessar via anon key / PostgREST.
+O backend é o único tier confiável: conecta no Postgres da Supabase e sempre
+filtra por ``user_id``. As policies de RLS (ver ``db/schema.sql``) são uma
+segunda camada de defesa contra acesso via anon key / PostgREST.
 """
 from collections.abc import Generator
 
@@ -14,10 +13,10 @@ from .config import settings
 
 
 class Base(DeclarativeBase):
-    pass
+    """Classe base declarativa dos modelos ORM."""
 
 
-# pool_pre_ping evita conexões mortas no free tier que dorme.
+# pool_pre_ping revalida conexões ociosas (o free tier do banco hiberna).
 engine = create_engine(
     settings.DATABASE_URL or "postgresql+psycopg2://localhost/placeholder",
     pool_pre_ping=True,
@@ -30,6 +29,11 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 
 
 def get_db() -> Generator[Session, None, None]:
+    """Fornece uma sessão do banco por request e a fecha ao final.
+
+    Yields:
+        A sessão do SQLAlchemy, usada como dependência do FastAPI.
+    """
     db = SessionLocal()
     try:
         yield db

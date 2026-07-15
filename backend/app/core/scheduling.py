@@ -1,16 +1,10 @@
-"""Motor de alocação de tarefas nos blocos de estudo.
+"""Motor de alocação de tarefas em blocos de estudo.
 
-Regras (conforme especificado):
-  * Só alocamos em blocos de ESTUDO (eventos com nome em minúsculas, ex.: "quimica").
-  * NUNCA sobrepomos aulas (nome em MAIÚSCULAS, ex.: "QUIMICA").
-  * Um bloco de estudo de uma matéria recebe tarefas daquela matéria (match por
-    nome normalizado). Tarefas sem match de matéria podem ir para blocos "genéricos"
-    (blocos de estudo cuja matéria não bate com nenhuma etiqueta) — opcional.
-  * Prioridade: tarefas de MAIOR duração primeiro (first-fit decreasing).
-    Ex.: bloco de 90min + tarefas [60, 60, 15, 15] => aloca [60, 15, 15] (=90),
-    a outra de 60 vai para o próximo bloco livre.
-
-Este módulo é PURO (sem banco, sem rede) para ser testável isoladamente.
+Módulo puro (sem banco e sem rede) para ser testável isoladamente. As tarefas
+são alocadas apenas em blocos de *estudo* (eventos de agenda com título em
+minúsculas); blocos de aula (título em maiúsculas) nunca são sobrescritos. A
+alocação usa a heurística *first-fit decreasing*: tarefas mais longas primeiro,
+cada uma no bloco compatível que deixa a menor sobra (best-fit).
 """
 from __future__ import annotations
 
@@ -21,6 +15,15 @@ from datetime import datetime, timedelta
 
 
 def normalize_subject(text: str) -> str:
+    """Normaliza o nome de uma matéria para comparação.
+
+    Args:
+        text: Nome da matéria (ex.: "Matemática").
+
+    Returns:
+        Chave sem acentos, em minúsculas e com espaços colapsados
+        (ex.: "matematica"), permitindo comparar "Matematica" e "Matemática".
+    """
     text = str(text or "").strip().lower()
     text = "".join(
         c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
@@ -30,30 +33,48 @@ def normalize_subject(text: str) -> str:
 
 @dataclass
 class StudyBlock:
-    """Um intervalo livre de estudo vindo da agenda (nome em minúsculas)."""
+    """Intervalo livre de estudo vindo da agenda.
+
+    Attributes:
+        start: Início do bloco.
+        end: Fim do bloco.
+        subject: Texto original do evento (ex.: "quimica").
+    """
 
     start: datetime
     end: datetime
-    subject: str  # texto original do evento, ex.: "quimica"
+    subject: str
 
     @property
     def subject_key(self) -> str:
+        """Nome da matéria normalizado para comparação."""
         return normalize_subject(self.subject)
 
     @property
     def capacity_min(self) -> int:
+        """Duração do bloco em minutos."""
         return int((self.end - self.start).total_seconds() // 60)
 
 
 @dataclass
 class SchedTask:
+    """Tarefa a ser alocada.
+
+    Attributes:
+        id: Identificador da tarefa.
+        duration_min: Duração em minutos.
+        subject_key: Etiqueta normalizada, ou "" quando sem etiqueta.
+    """
+
     id: str
     duration_min: int
-    subject_key: str  # etiqueta normalizada, "" se sem etiqueta
+    subject_key: str
 
 
 @dataclass
 class Assignment:
+    """Alocação de uma tarefa em um horário concreto."""
+
     task_id: str
     start: datetime
     end: datetime
@@ -62,24 +83,41 @@ class Assignment:
 
 @dataclass
 class ScheduleResult:
+    """Resultado da alocação.
+
+    Attributes:
+        assignments: Tarefas alocadas com seus horários.
+        unscheduled: IDs das tarefas que não couberam em nenhum bloco.
+    """
+
     assignments: list[Assignment] = field(default_factory=list)
-    unscheduled: list[str] = field(default_factory=list)  # task_ids que não couberam
+    unscheduled: list[str] = field(default_factory=list)
 
 
 def subtract_busy(
     blocks: list[StudyBlock],
     busy: list[tuple[datetime, datetime]],
 ) -> list[StudyBlock]:
-    """Remove dos blocos os intervalos já ocupados (tarefas concluídas que
-    mantêm o horário, aulas/eventos sobrepostos etc.), devolvendo apenas os
-    trechos realmente livres. Puro: não modifica as entradas."""
+    """Remove dos blocos os intervalos já ocupados.
+
+    Serve para descontar tarefas concluídas que mantêm o horário e eventos de
+    agenda sobrepostos, devolvendo apenas os trechos realmente livres.
+
+    Args:
+        blocks: Blocos de estudo candidatos.
+        busy: Intervalos (início, fim) já ocupados.
+
+    Returns:
+        Novos blocos cobrindo só os trechos livres. As entradas não são
+        modificadas.
+    """
     out: list[StudyBlock] = []
     for b in blocks:
         segments: list[tuple[datetime, datetime]] = [(b.start, b.end)]
         for bs, be in sorted(busy):
             nxt: list[tuple[datetime, datetime]] = []
             for s, e in segments:
-                if be <= s or bs >= e:  # sem sobreposição
+                if be <= s or bs >= e:
                     nxt.append((s, e))
                     continue
                 if bs > s:
@@ -98,25 +136,33 @@ def organize(
     tasks: list[SchedTask],
     allow_generic_fallback: bool = True,
 ) -> ScheduleResult:
-    """Aloca tarefas em blocos. Não modifica as entradas.
+    """Aloca tarefas nos blocos de estudo.
 
     Estratégia:
-      1. Ordena tarefas por duração desc (maiores primeiro).
-      2. Para cada tarefa, procura o bloco compatível (mesma matéria) com
-         capacidade restante suficiente, escolhendo o que deixa MENOR sobra
-         (best-fit) para aproveitar melhor os blocos.
-      3. Se não houver bloco da matéria e allow_generic_fallback, tenta blocos
-         "genéricos" (cuja matéria não corresponde a nenhuma etiqueta das tarefas).
+        1. Ordena as tarefas por duração decrescente.
+        2. Para cada tarefa, escolhe o bloco da mesma matéria com capacidade
+           suficiente que deixa a menor sobra (best-fit).
+        3. Sem bloco da matéria e com ``allow_generic_fallback``, tenta blocos
+           genéricos (cuja matéria não corresponde a nenhuma etiqueta).
+
+    Args:
+        blocks: Blocos de estudo disponíveis.
+        tasks: Tarefas a alocar.
+        allow_generic_fallback: Permite usar blocos genéricos quando não há
+            bloco da matéria da tarefa.
+
+    Returns:
+        O resultado com as alocações e as tarefas sem espaço. As entradas não
+        são modificadas.
     """
-    # cursor/restante por bloco, preservando ordem cronológica
     blocks_sorted = sorted(blocks, key=lambda b: b.start)
     remaining = [b.capacity_min for b in blocks_sorted]
     cursor = [b.start for b in blocks_sorted]
 
-    subject_keys_das_tarefas = {t.subject_key for t in tasks if t.subject_key}
+    task_subject_keys = {t.subject_key for t in tasks if t.subject_key}
     generic_block_idx = {
         i for i, b in enumerate(blocks_sorted)
-        if b.subject_key not in subject_keys_das_tarefas
+        if b.subject_key not in task_subject_keys
     }
 
     result = ScheduleResult()
@@ -135,7 +181,6 @@ def organize(
             result.unscheduled.append(task.id)
             continue
 
-        # best-fit: menor sobra após alocar
         best = min(candidate_idxs, key=lambda i: remaining[i] - task.duration_min)
         start = cursor[best]
         end = start + timedelta(minutes=task.duration_min)

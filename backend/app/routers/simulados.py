@@ -1,4 +1,4 @@
-"""Aba 'Relatório de simulados': registro simples com % de acerto e histórico."""
+"""Endpoints de simulados: registro com percentual de acerto e histórico."""
 from __future__ import annotations
 
 import uuid
@@ -21,6 +21,7 @@ def create_simulado(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Cria um simulado calculando o percentual de acerto."""
     percent = round(payload.num_correct / payload.num_questions * 100, 2)
     entity = Simulado(
         user_id=uuid.UUID(user.id),
@@ -41,6 +42,7 @@ def list_simulados(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Lista os simulados do usuário, do mais recente para o mais antigo."""
     rows = db.execute(
         select(Simulado)
         .where(Simulado.user_id == uuid.UUID(user.id))
@@ -55,6 +57,11 @@ def delete_simulado(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Remove um simulado do usuário.
+
+    Raises:
+        HTTPException: 404 se o simulado não existir ou não for do usuário.
+    """
     try:
         sid = uuid.UUID(simulado_id)
     except ValueError:

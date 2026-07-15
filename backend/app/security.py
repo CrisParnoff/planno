@@ -1,16 +1,17 @@
-"""Autenticação e autorização.
+"""Autenticação e autorização das requisições.
 
-Fluxo:
-1. O frontend faz login com Google via Supabase Auth e recebe um JWT.
-2. Cada request para a nossa API manda esse JWT em `Authorization: Bearer <token>`.
-3. Aqui validamos a ASSINATURA do token (não confiamos em nada do cliente):
-   - Primeiro tentamos o segredo HS256 (SUPABASE_JWT_SECRET), se configurado.
-   - Senão, buscamos as chaves públicas no JWKS da Supabase (ES256/RS256).
-4. Extraímos o `sub` (user_id) e o `email` de dentro do token verificado.
-5. Checamos a WHITELIST: só emails aprovados (tabela allowed_emails) passam.
+Fluxo por request:
 
-O user_id NUNCA vem do corpo/params do request — sempre do token verificado.
-Isso é o que garante o isolamento entre inquilinos (multi-tenant).
+1. O frontend faz login com Google (Supabase Auth) e recebe um JWT.
+2. Cada request envia o JWT em ``Authorization: Bearer <token>``.
+3. A assinatura do token é verificada — via segredo HS256
+   (``SUPABASE_JWT_SECRET``) ou, na ausência dele, pelas chaves públicas do
+   JWKS da Supabase (ES256/RS256).
+4. ``sub`` (user_id) e ``email`` são extraídos do token verificado.
+5. A whitelist (tabela ``allowed_emails``) é checada.
+
+O ``user_id`` nunca vem do corpo ou dos params — sempre do token verificado —,
+o que garante o isolamento entre usuários (multi-tenant).
 """
 import time
 from typing import Any, Optional
@@ -26,11 +27,16 @@ from .config import settings
 from .database import get_db
 
 _JWKS_CACHE: dict[str, Any] = {"keys": None, "fetched_at": 0.0}
-_JWKS_TTL = 3600  # 1h
+_JWKS_TTL = 3600  # segundos (1h)
 
 
 class CurrentUser:
-    """Representa o usuário autenticado e autorizado."""
+    """Usuário autenticado e autorizado.
+
+    Attributes:
+        id: UUID do usuário (claim ``sub`` do token).
+        email: Email do usuário.
+    """
 
     def __init__(self, user_id: str, email: str):
         self.id = user_id
@@ -38,6 +44,7 @@ class CurrentUser:
 
 
 def _unauthorized(detail: str) -> HTTPException:
+    """Cria uma :class:`HTTPException` 401 padronizada."""
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=detail,
@@ -46,6 +53,12 @@ def _unauthorized(detail: str) -> HTTPException:
 
 
 def _get_jwks() -> dict:
+    """Retorna o JWKS da Supabase, com cache de 1h.
+
+    Raises:
+        HTTPException: 401 se a URL não estiver configurada ou o JWKS não puder
+            ser obtido.
+    """
     now = time.time()
     if _JWKS_CACHE["keys"] and now - _JWKS_CACHE["fetched_at"] < _JWKS_TTL:
         return _JWKS_CACHE["keys"]
@@ -64,12 +77,23 @@ def _get_jwks() -> dict:
 
 
 def _decode_token(token: str) -> dict:
+    """Verifica a assinatura de um JWT e devolve suas claims.
+
+    O algoritmo é escolhido pelo header do token: HS256 usa o segredo
+    simétrico; ES256/RS256 usam as chaves públicas do JWKS.
+
+    Args:
+        token: JWT recebido no header ``Authorization``.
+
+    Returns:
+        As claims do token verificado.
+
+    Raises:
+        HTTPException: 401 se o token for inválido ou a chave não for encontrada.
+    """
     options = {"verify_aud": True}
     audience = settings.SUPABASE_JWT_AUDIENCE
 
-    # Escolhemos o método de verificação pelo 'alg' do próprio token:
-    #   HS256  -> segredo simétrico (JWT Secret legado)
-    #   ES256/RS256 -> chaves públicas via JWKS (projetos com chaves novas)
     try:
         header = jwt.get_unverified_header(token)
     except JWTError as exc:
@@ -91,12 +115,11 @@ def _decode_token(token: str) -> dict:
         except JWTError as exc:
             raise _unauthorized("Token inválido.") from exc
 
-    # Caminho assimétrico (ES256/RS256) via JWKS.
     jwks = _get_jwks()
     kid = header.get("kid")
     key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
     if key is None:
-        # Chave rotacionada? Invalida cache e tenta uma vez mais.
+        # Chave possivelmente rotacionada: invalida o cache e tenta de novo.
         _JWKS_CACHE["keys"] = None
         jwks = _get_jwks()
         key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
@@ -115,14 +138,23 @@ def _decode_token(token: str) -> dict:
         raise _unauthorized("Token inválido.") from exc
 
 
-# Cache da whitelist: evita uma consulta ao Postgres em CADA request.
-# TTL curto para que revogar um acesso tenha efeito rápido.
-_WHITELIST_TTL = 300  # 5 min
+# Cache da whitelist para evitar uma consulta ao Postgres em cada request.
+# Só o resultado positivo é cacheado, para que a liberação de um acesso passe a
+# valer na hora (o negativo continua sendo consultado).
+_WHITELIST_TTL = 300  # segundos (5 min)
 _whitelist_cache: dict[str, tuple[bool, float]] = {}
 
 
 def _is_whitelisted(db: Session, email: str) -> bool:
-    """Só emails presentes e ativos na tabela allowed_emails podem usar o app."""
+    """Indica se o email está ativo na tabela ``allowed_emails``.
+
+    Args:
+        db: Sessão do banco.
+        email: Email extraído do token.
+
+    Returns:
+        ``True`` se o email estiver autorizado.
+    """
     key = email.lower()
     hit = _whitelist_cache.get(key)
     if hit is not None and hit[1] > time.time():
@@ -136,8 +168,6 @@ def _is_whitelisted(db: Session, email: str) -> bool:
         {"email": email},
     ).first()
     allowed = row is not None
-    # Só cacheia o "positivo": negados continuam consultando (acesso recém-liberado
-    # passa a valer na hora, sem esperar TTL).
     if allowed:
         _whitelist_cache[key] = (allowed, time.time() + _WHITELIST_TTL)
     return allowed
@@ -147,6 +177,19 @@ async def get_current_user(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> CurrentUser:
+    """Dependência do FastAPI que autentica e autoriza o usuário.
+
+    Args:
+        authorization: Header ``Authorization: Bearer <token>``.
+        db: Sessão do banco.
+
+    Returns:
+        O :class:`CurrentUser` verificado.
+
+    Raises:
+        HTTPException: 401 se o token for inválido; 403 se o email não estiver
+            na whitelist.
+    """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise _unauthorized("Cabeçalho Authorization ausente ou malformado.")
 

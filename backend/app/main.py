@@ -1,10 +1,8 @@
 """Ponto de entrada da API (FastAPI).
 
-Segurança aplicada aqui:
-  * CORS restrito às origens do frontend (nada de '*').
-  * Rate limiting (slowapi) para dificultar abuso/brute force.
-  * Cabeçalhos de segurança em toda resposta.
-  * Documentação (/docs) desabilitada em produção.
+Aplica, em toda a aplicação: CORS restrito às origens do frontend, rate
+limiting (slowapi), compressão Gzip, cabeçalhos de segurança e ocultação da
+documentação em produção.
 """
 from __future__ import annotations
 
@@ -32,8 +30,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Comprime respostas JSON (semana, listas de erros/tarefas) — payload menor,
-# carregamento mais rápido. Só age acima de ~500 bytes.
+# Comprime respostas JSON acima de ~500 bytes.
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
@@ -48,6 +45,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    """Adiciona cabeçalhos de segurança a toda resposta."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -60,12 +58,13 @@ async def security_headers(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
-    # Nunca vaza stack trace/detalhes internos ao cliente.
+    """Converte erros não tratados em 500 sem vazar detalhes internos."""
     return JSONResponse(status_code=500, content={"detail": "Erro interno."})
 
 
 @app.get("/health", tags=["infra"])
 def health():
+    """Healthcheck usado pelo provedor de deploy."""
     return {"status": "ok", "env": settings.ENV}
 
 

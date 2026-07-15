@@ -1,4 +1,4 @@
-"""Conexão e leitura do Google Calendar."""
+"""Endpoints de conexão e leitura do Google Calendar."""
 from __future__ import annotations
 
 import uuid
@@ -24,6 +24,7 @@ def status(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Informa se o usuário já conectou a Google Agenda."""
     conn = db.execute(
         select(CalendarConnection).where(
             CalendarConnection.user_id == uuid.UUID(user.id)
@@ -38,8 +39,7 @@ def connect(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Recebe o refresh token do Google (via Supabase provider) e guarda
-    criptografado. Faz upsert por usuário."""
+    """Guarda (upsert) o refresh token do Google, cifrado, para o usuário."""
     uid = uuid.UUID(user.id)
     conn = db.execute(
         select(CalendarConnection).where(CalendarConnection.user_id == uid)
@@ -51,7 +51,7 @@ def connect(
     else:
         conn.refresh_token_encrypted = enc
     db.commit()
-    invalidate_events_cache(uid)  # mostra os eventos novos na hora
+    invalidate_events_cache(uid)
     return {"connected": True}
 
 
@@ -60,6 +60,7 @@ def disconnect(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Remove a conexão com a Google Agenda do usuário."""
     conn = db.execute(
         select(CalendarConnection).where(
             CalendarConnection.user_id == uuid.UUID(user.id)
@@ -77,6 +78,11 @@ def week_events(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Lista os eventos da agenda na semana informada.
+
+    Raises:
+        HTTPException: 502 se a leitura do Google Calendar falhar.
+    """
     ws = monday_of(week_start)
     try:
         events = fetch_events(db, uuid.UUID(user.id), ws)

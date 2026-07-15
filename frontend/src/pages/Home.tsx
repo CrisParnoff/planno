@@ -53,8 +53,7 @@ export default function Home() {
 
   const toggle = async (t: Task) => {
     const done = t.effective_status !== "done";
-    // atualização otimista: reflete na hora, sem esperar a rede nem recarregar
-    // a semana inteira (que consulta a Google Agenda).
+    // Atualização otimista (evita recarregar a semana inteira a cada clique).
     setView((v) =>
       v
         ? {

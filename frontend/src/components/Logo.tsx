@@ -1,5 +1,4 @@
-// Marca do Planno: uma checklist (organização) desenhada em branco para
-// aparecer sobre o quadrado roxo com gradiente (classe .logo do CSS).
+/** Marca do Planno (checklist branca) para exibir sobre o quadrado roxo. */
 export function PlannoMark({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="30 30 66 62" fill="none" aria-hidden>

@@ -1,10 +1,9 @@
-"""Etiquetas/matérias customizáveis para as tarefas.
+"""Endpoints de etiquetas (matérias) customizáveis por usuário.
 
-Regras:
- * Na primeira vez (ou quando faltam), garantimos as etiquetas padrão de
-   pré-vestibular para todos os usuários.
- * Não podem existir duas etiquetas com o mesmo nome IGNORANDO maiúsculas e
-   acentos (ex.: "Matematica" e "Matemática" são consideradas iguais).
+As etiquetas padrão de pré-vestibular são garantidas na primeira listagem de
+cada usuário. Não podem existir duas etiquetas com o mesmo nome quando
+comparadas sem acentos e sem diferença de maiúsculas (ex.: "Matematica" e
+"Matemática" são consideradas iguais).
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ from ..security import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/api/labels", tags=["labels"])
 
-# Disciplinas comuns em cursinhos pré-vestibular (ENEM/vestibulares).
 DEFAULT_LABELS: list[tuple[str, str]] = [
     ("Matemática", "#7458d6"),
     ("Português", "#4b47ad"),
@@ -43,8 +41,16 @@ DEFAULT_LABELS: list[tuple[str, str]] = [
 
 
 def _ensure_defaults(db: Session, user_id: uuid.UUID, existing_keys: set[str]) -> bool:
-    """Insere apenas as etiquetas padrão que faltam (compara por nome
-    normalizado: sem acentos e sem diferença de maiúsculas)."""
+    """Insere as etiquetas padrão que ainda faltam para o usuário.
+
+    Args:
+        db: Sessão do banco.
+        user_id: Dono das etiquetas.
+        existing_keys: Nomes já existentes, normalizados.
+
+    Returns:
+        ``True`` se alguma etiqueta foi inserida.
+    """
     to_add = [
         Label(user_id=user_id, name=name, color=color)
         for name, color in DEFAULT_LABELS
@@ -61,6 +67,7 @@ def list_labels(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Lista as etiquetas do usuário, garantindo as padrão que faltarem."""
     uid = uuid.UUID(user.id)
     rows = db.execute(
         select(Label).where(Label.user_id == uid).order_by(Label.name)
@@ -81,6 +88,12 @@ def create_label(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Cria uma etiqueta, rejeitando nomes duplicados.
+
+    Raises:
+        HTTPException: 409 se já existir etiqueta com o mesmo nome
+            (ignorando maiúsculas e acentos).
+    """
     uid = uuid.UUID(user.id)
     name = payload.name.strip()
     key = normalize_subject(name)
@@ -111,6 +124,11 @@ def delete_label(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Remove uma etiqueta do usuário.
+
+    Raises:
+        HTTPException: 404 se a etiqueta não existir ou não for do usuário.
+    """
     try:
         lid = uuid.UUID(label_id)
     except ValueError:

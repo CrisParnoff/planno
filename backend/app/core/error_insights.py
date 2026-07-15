@@ -1,16 +1,10 @@
 """Agregações do caderno de erros.
 
-A partir da lista de erros (um por questão), calcula os números que aparecem
-no topo da aba "Relatório de erros":
-
-  * total de erros e quantos ainda faltam refazer;
-  * distribuição por tipo de erro (conteúdo / atenção / interpretação);
-  * ranking de matérias (quanto cada uma pesa) e, dentro de cada matéria,
-    qual ASSUNTO mais aparece — é o "o que mais erra em Física é Mecânica";
-  * evolução semanal (quantos erros por semana), para ver se está melhorando.
-
-Tudo é calculado em Python sobre as linhas do próprio usuário (já filtradas
-por user_id na camada de rota).
+A partir da lista de erros (um por questão), calcula os números exibidos no
+topo da aba "Relatório de erros": total e pendentes de refazer, distribuição
+por tipo de erro, ranking de matérias com o assunto mais frequente de cada uma
+e a evolução semanal. Tudo é computado em Python sobre linhas já filtradas por
+``user_id`` na camada de rota.
 """
 from __future__ import annotations
 
@@ -21,27 +15,35 @@ ERROR_TYPE_ORDER = ("conteudo", "atencao", "interpretacao")
 
 
 def _week_start(d: date) -> date:
-    """Segunda-feira da semana de `d`."""
+    """Retorna a segunda-feira da semana da data informada."""
     return d - timedelta(days=d.weekday())
 
 
 def build_overview(entries: list) -> dict:
-    """`entries` = objetos ErrorEntry (ou similares) com os atributos usados."""
+    """Calcula o resumo de insights a partir dos erros do usuário.
+
+    Args:
+        entries: Objetos de erro (``ErrorEntry``) com os atributos
+            ``error_type``, ``subject``, ``topic``, ``redone``, ``error_date``
+            e ``created_at``.
+
+    Returns:
+        Dicionário com ``total``, ``pending_redo``, ``by_type``, ``by_subject``
+        (incluindo assunto e tipo predominantes por matéria), ``worst_subject``,
+        ``worst_topic_overall`` e ``evolution`` (contagem por semana).
+    """
     total = len(entries)
     pending_redo = sum(1 for e in entries if not e.redone)
 
-    # ---- por tipo de erro ----
     type_counter: Counter[str] = Counter(e.error_type for e in entries)
     by_type = []
     for t in ERROR_TYPE_ORDER:
         c = type_counter.get(t, 0)
         by_type.append({"type": t, "count": c, "share": (c / total) if total else 0.0})
-    # tipos fora da lista canônica (defensivo)
     for t, c in type_counter.items():
         if t not in ERROR_TYPE_ORDER:
             by_type.append({"type": t, "count": c, "share": (c / total) if total else 0.0})
 
-    # ---- por matéria, com assunto/tipo predominante ----
     subj_counter: Counter[str] = Counter()
     subj_topics: dict[str, Counter[str]] = defaultdict(Counter)
     subj_types: dict[str, Counter[str]] = defaultdict(Counter)
@@ -78,7 +80,6 @@ def build_overview(entries: list) -> dict:
         tname, tcount = topic_overall.most_common(1)[0]
         worst_topic_overall = {"topic": tname, "count": tcount}
 
-    # ---- evolução semanal ----
     week_counter: Counter[date] = Counter()
     for e in entries:
         d = e.error_date or (e.created_at.date() if e.created_at else None)

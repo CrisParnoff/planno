@@ -1,192 +1,180 @@
 # Planno
 
-Aplicação web multi-tenant para organizar a semana de estudos de quem está se
-preparando para o vestibular de medicina. Puxa a Google Agenda, distribui
-tarefas automaticamente nos horários livres de estudo, gera relatórios de erros
-a partir de planilhas e acompanha simulados.
+**Planno organiza a rotina de estudos de quem está na preparação para o
+vestibular.** O app nasceu de um motivo pessoal: ajudar a minha namorada a
+organizar a semana de estudos para medicina, distribuindo as tarefas nos
+horários livres da agenda dela e mostrando, com clareza, onde ela mais erra
+para saber o que revisar. Foi construído também pensando na possibilidade de os
+colegas dela usarem — por isso é multiusuário, com acesso controlado por uma
+lista de emails autorizados.
 
-> **Stack:** React + TypeScript (Vite) · FastAPI (Python) · PostgreSQL (Supabase) ·
-> Supabase Auth (Google OAuth) · Google Calendar API · GitHub Actions (cron) · Docker.
+Na prática, o Planno responde a três perguntas do dia a dia de quem estuda para
+o vestibular:
 
-<!-- Dica de portfólio: cole aqui um GIF de ~10s clicando em "Organizar" e as
-     tarefas se distribuindo na agenda. É o que converte o recrutador. -->
-<!-- ![demo](docs/demo.gif) -->
+- **"O que eu estudo esta semana e quando?"** — cadastre as tarefas e o Planno
+  as encaixa automaticamente nos seus horários de estudo.
+- **"Onde eu mais erro?"** — o caderno de erros digital mostra, por matéria,
+  qual assunto pesa mais (ex.: em Física, o que mais cai é Mecânica).
+- **"Estou evoluindo?"** — simulados e a evolução de erros por semana mostram o
+  progresso ao longo do tempo.
 
 ---
 
 ## Funcionalidades
 
-- **Organizar semana (núcleo):** login com Google, leitura da agenda, visão
-  semanal tipo Google Agenda, cadastro de tarefas (etiqueta + duração) e um
-  botão **Organizar** que aloca as tarefas nos blocos de estudo — priorizando as
-  de maior duração e **nunca** ocupando horário de aula.
-- **Relatório de erros:** upload de planilha `.xlsx/.csv`, ranking decrescente
-  por matéria, insights de foco, histórico e **comparação** entre dois relatórios.
-- **Simulados:** registro de nome/questões/acertos com % automática e histórico.
-- **Tela principal:** atalhos, data/hora, e a semana em modo acompanhamento (só checks).
-- **Rollover de sábado:** todo sábado 00h01 (via GitHub Actions), pendências não
-  concluídas são consolidadas; o que sobra vira "atrasado" na semana seguinte.
+- **Organizar semana:** visão da semana no estilo Google Agenda. Você reserva
+  horários de estudo, cadastra tarefas (matéria + duração) e o botão
+  **Organizar** aloca as tarefas nos blocos de estudo — priorizando as de maior
+  duração e nunca ocupando horário de aula.
+- **Relatório de erros (caderno de erros):** cada erro é registrado por questão
+  (prova, data, matéria, assunto e tipo de erro). No topo aparecem os insights:
+  matéria que mais precisa de atenção, assunto campeão de erros por matéria,
+  distribuição por tipo de erro e evolução por semana. Há também uma seção
+  "Refazer" para as questões pendentes.
+- **Simulados:** registro de nome, questões e acertos, com percentual calculado
+  automaticamente e histórico.
+- **Tela principal:** atalhos, data/hora e a semana em modo acompanhamento.
+- **Rollover de sábado:** toda semana, as pendências não concluídas são
+  consolidadas na semana seguinte e marcadas como atrasadas.
 
 ---
 
-## Arquitetura e decisões
+## Stack
+
+| Camada | Tecnologias |
+| --- | --- |
+| **Frontend** | React 18 + TypeScript, Vite, React Router, CSS próprio (tokens OKLCH; fontes Fraunces + Inter) |
+| **Backend** | Python 3.12, FastAPI, SQLAlchemy 2, Pydantic, Uvicorn |
+| **Banco de dados** | PostgreSQL (Supabase) com Row Level Security |
+| **Autenticação** | Supabase Auth (login com Google) + verificação de JWT no backend |
+| **Integração** | Google Calendar API (somente leitura) |
+| **Infra / deploy** | Frontend na **Vercel**, backend na **Render** (Docker), banco/auth na **Supabase**, cron na **GitHub Actions** |
+
+Resumo: **React/TS (Vite) na Vercel + FastAPI (Python) na Render + PostgreSQL na
+Supabase**, com login Google, leitura da Google Agenda e um cron no GitHub
+Actions para o rollover semanal.
+
+---
+
+## Como a Google Agenda deve estar organizada
+
+O Planno **lê** a Google Agenda (nunca escreve nela) e decide o papel de cada
+evento pelo **título**. Para o organizador funcionar bem, os eventos precisam
+seguir esta convenção:
+
+- **Aulas → título em MAIÚSCULAS** (ex.: `QUÍMICA`, `BIOLOGIA`).
+  São blocos fixos: o Planno **nunca** aloca tarefas em cima de uma aula.
+- **Horários de estudo → título em minúsculas** (ex.: `quimica`, `biologia`).
+  São os espaços onde o Planno encaixa as tarefas. O título indica a matéria do
+  bloco: uma tarefa de Química é alocada num bloco `quimica`.
+- **Simulados → título contendo "simulado"** (ex.: `Simulado ENEM`).
+  Aparecem destacados na visão da semana.
+- **Outros compromissos → título misto** (ex.: `Academia`, `Consulta médica`).
+  São tratados como ocupados: o Planno não aloca tarefas nesses horários, mas
+  também não os trata como bloco de estudo.
+
+Regras de alocação, em resumo:
+
+1. Só entram tarefas nos **blocos de estudo** (títulos em minúsculas).
+2. A matéria da tarefa precisa bater com a matéria do bloco (comparação sem
+   acentos e sem diferença de maiúsculas). Tarefas sem matéria podem usar
+   blocos genéricos.
+3. Tarefas mais longas são alocadas primeiro (heurística *first-fit
+   decreasing*), aproveitando melhor cada bloco.
+
+> **Sem horários na Google Agenda?** Não tem problema. Dá para criar **blocos de
+> estudo recorrentes dentro do próprio app** (na aba "Organizar semana"), e o
+> organizador passa a usar esses blocos. Assim o Planno funciona mesmo para
+> quem não mantém a agenda no Google.
+
+---
+
+## Acesso (whitelist)
+
+O uso é restrito aos emails cadastrados na tabela `allowed_emails`. Quem loga
+com um email não autorizado vê uma tela informando que não tem permissão e não
+acessa nenhuma funcionalidade. Para liberar um novo usuário, basta inserir o
+email nessa tabela.
+
+---
+
+## Arquitetura
 
 ```
 ┌────────────┐    JWT (Bearer)     ┌──────────────┐   SQL     ┌─────────────┐
 │  Frontend  │ ──────────────────► │   Backend    │ ────────► │  Postgres   │
 │ React + TS │                     │   FastAPI    │           │  (Supabase) │
-│ (Vercel)   │ ◄────── JSON ────── │ (Render)     │ ◄──────── │  + RLS      │
+│  (Vercel)  │ ◄────── JSON ────── │   (Render)   │ ◄──────── │   + RLS     │
 └─────┬──────┘                     └──────┬───────┘           └─────────────┘
       │ login Google (Supabase Auth)      │ Google Calendar API (readonly)
       ▼                                   ▼
   Supabase Auth                     Google Calendar
 ```
 
-- **`week_start` sempre na segunda-feira.** Toda a modelagem de semana parte disso.
-- **O status "atrasado" é DERIVADO na leitura** (função da data atual), não gravado.
-  Assim o app nunca mente sobre o estado, mesmo que o cron falhe. O cron de sábado
-  apenas **materializa** o movimento das tarefas (conveniência de UX).
-- **Alocação = heurística gulosa** (first-fit decreasing), não um otimizador. Ordena
-  por duração decrescente e encaixa no bloco compatível com menor sobra. Testada em
+Decisões de projeto:
+
+- **O backend é o único tier confiável.** O frontend usa a Supabase apenas para
+  o login; todo dado de aplicação passa pela API FastAPI, que valida a
+  assinatura do JWT, extrai o `user_id` de dentro do token e filtra todas as
+  consultas por ele. As policies de RLS no banco são uma segunda camada.
+- **O estado "atrasado" é derivado na leitura** (em função da data), então o app
+  nunca fica inconsistente mesmo que o cron falhe.
+- **A alocação é uma heurística gulosa** (first-fit decreasing), testada em
   `backend/tests/test_scheduling.py`.
-- **Google Calendar é somente leitura** (`calendar.readonly`). Fonte de verdade das
-  tarefas é o Postgres; da agenda de aulas, o Google. Sem sincronização bidirecional.
+- **A Google Agenda é somente leitura.** A fonte de verdade das tarefas é o
+  Postgres; das aulas, o Google. Não há sincronização de volta.
 
 ---
 
-## Segurança
+## Rodando localmente
 
-Multi-tenant com isolamento em **duas camadas**:
+Pré-requisitos: Docker + Docker Compose, uma conta Supabase e um projeto no
+Google Cloud.
 
-1. **Backend como tier confiável.** O frontend usa a Supabase apenas para login.
-   **Todo** dado de aplicação passa pela API FastAPI, que:
-   - valida a **assinatura** do JWT (JWKS assimétrico ou segredo HS256) — nada vindo
-     do cliente é confiável;
-   - extrai o `user_id` **de dentro do token** (nunca do corpo/query);
-   - filtra **todas** as queries por esse `user_id`.
-2. **RLS no banco (defense-in-depth).** Todas as tabelas têm Row Level Security com
-   policy `auth.uid() = user_id`. Mesmo que a anon key pública seja usada via
-   PostgREST, ninguém enxerga dados de outro usuário.
-
-Outras medidas:
-
-- **Whitelist de emails** (`allowed_emails`): só emails que você cadastrar conseguem
-  usar o app; qualquer outro login é bloqueado com `403`.
-- **Refresh token do Google criptografado** em repouso (Fernet). Se o banco vazar,
-  os tokens são inúteis sem a `TOKEN_ENCRYPTION_KEY` (que fica só no servidor).
-- **CORS restrito** às origens do frontend (nada de `*`).
-- **Rate limiting** (120 req/min por IP) e **cabeçalhos de segurança** em toda resposta.
-- **Endpoint de cron protegido** por segredo comparado em tempo constante (`hmac`).
-- **Docs desativados em produção**; erros internos nunca vazam stack trace.
-
----
-
-## Como rodar localmente (Docker Compose)
-
-### Pré-requisitos
-- Docker + Docker Compose
-- Uma conta Supabase (grátis) e um projeto no Google Cloud (grátis)
-
-### 1. Supabase
-1. Crie um projeto em https://supabase.com.
-2. No **SQL Editor**, cole e rode todo o `backend/db/schema.sql` (cria tabelas + RLS).
-3. Em **Authentication → Providers → Google**, ative o provider (usaremos as
-   credenciais do passo 2 do Google abaixo). Em **Scopes**, adicione:
-   `https://www.googleapis.com/auth/calendar.readonly`.
-4. Adicione você/namorada à whitelist (SQL Editor):
-   ```sql
-   insert into public.allowed_emails (email, note)
-   values ('email-da-sua-namorada@gmail.com', 'usuária principal');
+1. **Supabase:** crie o projeto, rode `backend/db/schema.sql` e
+   `backend/db/migration_error_entries.sql` no SQL Editor, ative o provider
+   Google (scope `calendar.readonly`) e cadastre seu email em `allowed_emails`.
+2. **Variáveis de ambiente:** copie `backend/.env.example` e
+   `frontend/.env.example` para `.env` e preencha.
+3. **Suba tudo:**
+   ```bash
+   docker compose up --build
    ```
-5. Anote em **Project Settings → API**: `Project URL`, `anon public key`, e o
-   `JWT Secret` (aba API). Em **Database**, pegue a connection string (URI).
+   - Frontend: http://localhost:5173
+   - API (docs em dev): http://localhost:8000/docs
 
-### 2. Google Cloud (Calendar API)
-1. Em https://console.cloud.google.com crie um projeto.
-2. **APIs & Services → Library:** ative a **Google Calendar API**.
-3. **Credentials → Create Credentials → OAuth client ID → Web application.**
-   - **Authorized redirect URIs:** adicione o callback da Supabase:
-     `https://SEU-PROJETO.supabase.co/auth/v1/callback`
-4. Copie o **Client ID** e **Client secret** (usados no backend e na Supabase).
-5. Em **OAuth consent screen**, publique em **Production** com o escopo
-   `calendar.readonly` (evita o refresh token expirar em 7 dias do modo Testing).
-
-### 3. Variáveis de ambiente
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-```
-Preencha os dois `.env`. Gere as chaves que faltam:
-```bash
-# TOKEN_ENCRYPTION_KEY
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# CRON_SECRET
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-### 4. Subir
-```bash
-docker compose up --build
-```
-- Frontend: http://localhost:5173
-- API + docs (dev): http://localhost:8000/docs
+O passo a passo completo de deploy (Vercel + Render + GitHub Actions) está em
+`DEPLOY.md`.
 
 ---
 
-## Rodar sem Docker (opcional)
+## Estrutura
 
-**Backend**
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
 ```
-**Frontend**
-```bash
-cd frontend
-npm install
-npm run dev
+planno/
+├── backend/
+│   ├── app/
+│   │   ├── core/        # scheduling, planner_service, google_calendar, crypto, error_insights
+│   │   ├── routers/     # auth, errors, simulados, labels, calendar, planner, cron
+│   │   ├── security.py  # verificação de JWT + whitelist
+│   │   ├── models.py    # modelos SQLAlchemy
+│   │   └── main.py      # app + CORS + rate limit + headers
+│   ├── db/              # schema.sql e migrações
+│   └── tests/
+├── frontend/
+│   └── src/
+│       ├── lib/         # supabase, api, auth, types, week
+│       ├── components/  # Layout, WeekCalendar, Modal, dialogs, Logo
+│       └── pages/       # Home, Planner, Errors, Simulados, Login, NoAccess
+├── .github/workflows/   # cron do rollover de sábado
+└── docker-compose.yml
 ```
 
 ---
 
 ## Testes
+
 ```bash
 cd backend
-pytest            # motor de alocação (inclui o caso 60+15+15 no bloco de 90min)
-```
-
----
-
-## Cron de sábado (deploy)
-O workflow `.github/workflows/saturday-rollover.yml` roda sábado 00h01 (BRT) e
-chama `POST /internal/cron/rollover`. Em **Settings → Secrets → Actions** do seu
-repositório, defina:
-- `BACKEND_URL` — URL pública do backend (ex.: `https://seu-app.onrender.com`)
-- `CRON_SECRET` — o mesmo valor do `.env` do backend
-
-Também dá para disparar manualmente pela aba **Actions → Run workflow**.
-
----
-
-## Estrutura
-```
-med-study-planner/
-├── backend/
-│   ├── app/
-│   │   ├── core/        # excel, scheduling, google_calendar, planner_service, crypto
-│   │   ├── routers/     # errors, simulados, labels, calendar, planner, cron
-│   │   ├── security.py  # verificação de JWT + whitelist
-│   │   ├── models.py    # SQLAlchemy
-│   │   └── main.py      # app + CORS + rate limit + headers
-│   ├── db/schema.sql    # tabelas + RLS + whitelist
-│   └── tests/
-├── frontend/
-│   └── src/
-│       ├── lib/         # supabase, api, auth, types, week
-│       ├── components/  # Layout, WeekCalendar
-│       └── pages/       # Home, Planner, Errors, Simulados, Login
-├── .github/workflows/saturday-rollover.yml
-└── docker-compose.yml
+pytest
 ```

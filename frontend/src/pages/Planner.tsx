@@ -110,8 +110,7 @@ export default function Planner() {
 
   const toggle = async (t: Task) => {
     const done = t.effective_status !== "done";
-    // atualização otimista: não recarrega a semana inteira (Google Agenda) a
-    // cada clique — só ajusta a tarefa localmente e confirma no servidor.
+    // Atualização otimista (evita recarregar a semana inteira a cada clique).
     setView((v) =>
       v
         ? {

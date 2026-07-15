@@ -1,5 +1,4 @@
-"""Aba 'Organizar semana': tarefas, blocos de estudo, botão organizar,
-visão da semana e checks."""
+"""Endpoints de planejamento: tarefas, blocos de estudo, organização e semana."""
 from __future__ import annotations
 
 import uuid
@@ -39,6 +38,7 @@ router = APIRouter(prefix="/api/planner", tags=["planner"])
 
 
 def _task_out(t: Task, now) -> TaskOut:
+    """Serializa uma tarefa incluindo o estado efetivo derivado."""
     return TaskOut(
         id=str(t.id),
         label_id=str(t.label_id) if t.label_id else None,
@@ -54,6 +54,11 @@ def _task_out(t: Task, now) -> TaskOut:
 
 
 def _get_owned_task(db: Session, user: CurrentUser, task_id: str) -> Task:
+    """Busca uma tarefa do próprio usuário.
+
+    Raises:
+        HTTPException: 404 se a tarefa não existir ou não for do usuário.
+    """
     try:
         tid = uuid.UUID(task_id)
     except ValueError:
@@ -66,13 +71,18 @@ def _get_owned_task(db: Session, user: CurrentUser, task_id: str) -> Task:
     return t
 
 
-# ------------------------------------------------------------ tarefas
 @router.post("/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
 def create_task(
     payload: TaskCreate,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Cria uma tarefa de estudo na semana informada.
+
+    Raises:
+        HTTPException: 422 se ``label_id`` for inválido; 404 se a etiqueta não
+            for do usuário.
+    """
     label_uuid = None
     if payload.label_id:
         try:
@@ -106,6 +116,7 @@ def list_tasks(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Lista as tarefas da semana, das mais longas para as mais curtas."""
     ws = monday_of(week_start)
     rows = db.execute(
         select(Task)
@@ -122,6 +133,7 @@ def delete_task(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Remove uma tarefa do usuário."""
     t = _get_owned_task(db, user, task_id)
     db.delete(t)
     db.commit()
@@ -134,6 +146,7 @@ def check_task(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Marca uma tarefa como concluída ou pendente."""
     t = _get_owned_task(db, user, task_id)
     t.status = "done" if payload.done else "pending"
     db.commit()
@@ -148,6 +161,11 @@ def reallocate_task(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Move (ou desaloca) manualmente uma tarefa para um novo horário.
+
+    Raises:
+        HTTPException: 422 se o fim não for posterior ao início.
+    """
     t = _get_owned_task(db, user, task_id)
     if payload.scheduled_start and payload.scheduled_end:
         if payload.scheduled_end <= payload.scheduled_start:
@@ -162,12 +180,12 @@ def reallocate_task(
     return _task_out(t, now_local())
 
 
-# ------------------------------------------------------------ blocos de estudo (app)
 @router.get("/study-blocks", response_model=list[StudyBlockOut])
 def list_study_blocks(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Lista os blocos de estudo recorrentes do usuário."""
     rows = db.execute(
         select(StudyBlock)
         .where(StudyBlock.user_id == uuid.UUID(user.id))
@@ -182,6 +200,7 @@ def create_study_block(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Cria um bloco de estudo recorrente."""
     entity = StudyBlock(
         user_id=uuid.UUID(user.id),
         weekday=payload.weekday,
@@ -201,6 +220,7 @@ def delete_study_block(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Remove um bloco de estudo do usuário."""
     try:
         bid = uuid.UUID(block_id)
     except ValueError:
@@ -216,13 +236,17 @@ def delete_study_block(
     db.commit()
 
 
-# ------------------------------------------------------------ organizar
 @router.post("/organize")
 def organize_endpoint(
     payload: OrganizeIn,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Aloca as tarefas da semana nos blocos de estudo.
+
+    Raises:
+        HTTPException: 502 se a leitura da agenda do Google falhar.
+    """
     ws = monday_of(payload.week_start)
     try:
         result = organize_week(db, uuid.UUID(user.id), ws, task_ids=payload.task_ids)
@@ -231,15 +255,17 @@ def organize_endpoint(
     return result
 
 
-# ------------------------------------------------------------ visão da semana
 @router.get("/week")
 def week_view(
     week_start: date = Query(...),
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Visão combinada: eventos da agenda + blocos de estudo do app + tarefas
-    alocadas, com status derivado."""
+    """Retorna a visão combinada da semana.
+
+    Junta os eventos da agenda, os blocos de estudo do app e as tarefas
+    alocadas, com o estado derivado de cada tarefa.
+    """
     uid = uuid.UUID(user.id)
     ws = monday_of(week_start)
     try:
@@ -247,7 +273,6 @@ def week_view(
     except GoogleCalendarError:
         events = []
 
-    # Junta os blocos de estudo criados no app (como eventos de estudo).
     events = events + db_study_block_events(db, uid, ws)
 
     rows = db.execute(
@@ -268,4 +293,5 @@ def manual_rollover(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Dispara o rollover manualmente para o próprio usuário."""
     return rollover_user(db, uuid.UUID(user.id))

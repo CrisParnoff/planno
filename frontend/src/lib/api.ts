@@ -49,10 +49,8 @@ async function doFetch<T>(path: string, init: RequestInit): Promise<T> {
   return body as T;
 }
 
-// Cache leve de GETs + deduplicação de chamadas em voo. Isso evita refazer as
-// mesmas requisições ao navegar entre telas (ex.: a "semana" carregada na
-// Principal é reaproveitada em "Organizar semana") e junta chamadas idênticas
-// disparadas ao mesmo tempo. Qualquer escrita (POST/DELETE/PATCH) limpa o cache.
+// Cache curto de GETs com deduplicação de chamadas em voo; qualquer escrita
+// invalida o cache.
 const CACHE_TTL = 8000; // ms
 type CacheEntry = { t: number; data: unknown };
 const getCache = new Map<string, CacheEntry>();
