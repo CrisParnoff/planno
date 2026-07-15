@@ -8,6 +8,7 @@ const KIND_LABEL: Record<CalendarEvent["kind"], string> = {
   estudo: "Bloco de estudo",
   simulado: "Simulado",
   outro: "Compromisso",
+  pendencias: "Pendências da semana",
 };
 
 /* ============================================================
