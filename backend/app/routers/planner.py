@@ -17,7 +17,7 @@ from ..core.planner_service import (
     monday_of,
     now_local,
     organize_week,
-    rollover_user,
+    rollover_monday,
 )
 from ..database import get_db
 from ..models import Label, StudyBlock, Task
@@ -294,4 +294,4 @@ def manual_rollover(
     db: Session = Depends(get_db),
 ):
     """Dispara o rollover manualmente para o próprio usuário."""
-    return rollover_user(db, uuid.UUID(user.id))
+    return rollover_monday(db, uuid.UUID(user.id))

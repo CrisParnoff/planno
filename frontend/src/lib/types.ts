@@ -96,7 +96,7 @@ export interface CalendarEvent {
   title: string;
   start: string;
   end: string;
-  kind: "aula" | "estudo" | "simulado" | "outro";
+  kind: "aula" | "estudo" | "simulado" | "outro" | "pendencias";
   subject: string | null;
 }
 

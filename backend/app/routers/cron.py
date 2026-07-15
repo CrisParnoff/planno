@@ -1,18 +1,24 @@
-"""Endpoint interno de rollover, chamado pelo GitHub Actions no sábado.
+"""Endpoints internos de rollover, chamados pelo GitHub Actions.
 
-Protegido por um segredo compartilhado (``CRON_SECRET``) enviado no header
-``X-Cron-Secret`` e comparado em tempo constante. Não usa JWT de usuário:
-processa todos os usuários com tarefas pendentes.
+* ``POST /internal/cron/rollover``: rollover de sábado (00h01).
+* ``POST /internal/cron/rollover-monday``: rollover de segunda (00h01).
+
+Ambos são protegidos por ``CRON_SECRET`` no header ``X-Cron-Secret`` (comparação
+em tempo constante) e processam todos os usuários com tarefas pendentes.
 """
 from __future__ import annotations
+
+import uuid
+from typing import Callable
 
 import hmac
 
 from fastapi import APIRouter, Header, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..core.planner_service import rollover_user
+from ..core.planner_service import rollover_monday, rollover_saturday
 from ..database import SessionLocal
 from ..models import Task
 
@@ -26,22 +32,12 @@ def _authorized(secret: str | None) -> bool:
     return hmac.compare_digest(secret, settings.CRON_SECRET)
 
 
-@router.post("/rollover")
-def run_rollover(x_cron_secret: str | None = Header(default=None)):
-    """Executa o rollover semanal para todos os usuários com pendências.
-
-    Args:
-        x_cron_secret: Segredo compartilhado enviado pelo cron.
+def _run_for_all(fn: Callable[[Session, uuid.UUID], dict]) -> dict:
+    """Executa ``fn`` para cada usuário com tarefa pendente, isolando falhas.
 
     Returns:
         Contagem de usuários processados e de falhas isoladas.
-
-    Raises:
-        HTTPException: 401 se o segredo for inválido ou ausente.
     """
-    if not _authorized(x_cron_secret):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Não autorizado.")
-
     db = SessionLocal()
     processed, errors = 0, 0
     try:
@@ -50,7 +46,7 @@ def run_rollover(x_cron_secret: str | None = Header(default=None)):
         ).scalars().all()
         for uid in user_ids:
             try:
-                rollover_user(db, uid)
+                fn(db, uid)
                 processed += 1
             except Exception:  # noqa: BLE001
                 db.rollback()
@@ -58,3 +54,27 @@ def run_rollover(x_cron_secret: str | None = Header(default=None)):
     finally:
         db.close()
     return {"users_processed": processed, "errors": errors}
+
+
+@router.post("/rollover")
+def run_rollover_saturday(x_cron_secret: str | None = Header(default=None)):
+    """Dispara o rollover de sábado para todos os usuários.
+
+    Raises:
+        HTTPException: 401 se o segredo for inválido ou ausente.
+    """
+    if not _authorized(x_cron_secret):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Não autorizado.")
+    return _run_for_all(rollover_saturday)
+
+
+@router.post("/rollover-monday")
+def run_rollover_monday(x_cron_secret: str | None = Header(default=None)):
+    """Dispara o rollover de segunda para todos os usuários.
+
+    Raises:
+        HTTPException: 401 se o segredo for inválido ou ausente.
+    """
+    if not _authorized(x_cron_secret):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Não autorizado.")
+    return _run_for_all(rollover_monday)

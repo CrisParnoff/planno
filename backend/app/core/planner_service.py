@@ -26,7 +26,7 @@ from .crypto import decrypt
 from .google_calendar import list_week_events
 from .scheduling import SchedTask
 from .scheduling import StudyBlock as SchedBlock
-from .scheduling import normalize_subject, organize, subtract_busy
+from .scheduling import is_simulado, normalize_subject, organize, pack_any, subtract_busy
 
 TZ = ZoneInfo(settings.APP_TIMEZONE)
 
@@ -209,6 +209,59 @@ def _label_key(task: Task) -> str:
     return ""
 
 
+def _is_simulado_task(task: Task) -> bool:
+    """Indica se a tarefa cita "simulado" (na etiqueta ou na descrição)."""
+    label = task.label.name if task.label is not None else ""
+    return is_simulado(label) or is_simulado(task.description)
+
+
+def _sched_task(task: Task) -> SchedTask:
+    """Converte uma tarefa do banco em :class:`SchedTask` para o motor."""
+    return SchedTask(
+        id=str(task.id),
+        duration_min=task.duration_min,
+        subject_key=_label_key(task),
+        is_simulado=_is_simulado_task(task),
+    )
+
+
+def _pendencias_blocks(
+    db: Session, user_id: uuid.UUID, week_start: date, not_before: datetime | None
+) -> list[SchedBlock]:
+    """Blocos de "pendências" do sábado (Google kind='pendencias' + app blocks).
+
+    Aceitam qualquer tarefa pendente e são usados só pelo rollover de sábado.
+    """
+    out: list[SchedBlock] = []
+    try:
+        events = fetch_events(db, user_id, week_start)
+    except Exception:  # noqa: BLE001
+        events = []
+    for ev in events:
+        if ev["kind"] != "pendencias":
+            continue
+        b = _trim(
+            SchedBlock(
+                start=datetime.fromisoformat(ev["start"]),
+                end=datetime.fromisoformat(ev["end"]),
+                subject=ev["subject"] or "pendencias",
+            ),
+            not_before,
+        )
+        if b and b.end > b.start:
+            out.append(b)
+    for r in _db_study_rows(db, user_id):
+        if "pendencias" not in normalize_subject(r.subject):
+            continue
+        d = week_start + timedelta(days=r.weekday)
+        start = datetime.combine(d, time(r.start_min // 60, r.start_min % 60), tzinfo=TZ)
+        end = datetime.combine(d, time(r.end_min // 60, r.end_min % 60), tzinfo=TZ)
+        b = _trim(SchedBlock(start=start, end=end, subject=r.subject), not_before)
+        if b and b.end > b.start:
+            out.append(b)
+    return out
+
+
 def organize_week(
     db: Session,
     user_id: uuid.UUID,
@@ -278,10 +331,7 @@ def organize_week(
         )
     blocks = subtract_busy(blocks, busy)
 
-    sched_tasks = [
-        SchedTask(id=str(t.id), duration_min=t.duration_min, subject_key=_label_key(t))
-        for t in selected
-    ]
+    sched_tasks = [_sched_task(t) for t in selected]
 
     result = organize(blocks, sched_tasks)
 
@@ -301,12 +351,14 @@ def organize_week(
     return {"scheduled": len(scheduled_ids), "unscheduled": result.unscheduled}
 
 
-def rollover_user(db: Session, user_id: uuid.UUID, now: datetime | None = None) -> dict:
-    """Rola pendências das semanas anteriores para a semana atual.
+def rollover_saturday(db: Session, user_id: uuid.UUID, now: datetime | None = None) -> dict:
+    """Rollover de sábado (00h01).
 
-    Tarefas não concluídas de semanas passadas são movidas para a segunda-feira
-    atual e marcadas como atrasadas; em seguida, as ainda não alocadas são
-    reorganizadas.
+    Todas as tarefas pendentes da semana (e stragglers anteriores) são marcadas
+    como atrasadas e realocadas: o que couber vai para o bloco de "pendências"
+    do sábado (permanecendo na semana atual); o que não couber é movido para a
+    semana seguinte e organizado nos horários dela. Sem bloco de pendências, tudo
+    vai para a semana seguinte.
 
     Args:
         db: Sessão do banco.
@@ -314,34 +366,101 @@ def rollover_user(db: Session, user_id: uuid.UUID, now: datetime | None = None) 
         now: Momento de referência (usa :func:`now_local` se omitido).
 
     Returns:
-        ``{"rolled_from_previous_weeks": int}``.
+        ``{"in_pendencias": int, "moved_to_next_week": int}``.
+    """
+    now = now or now_local()
+    current_monday = monday_of(now.date())
+    next_monday = current_monday + timedelta(days=7)
+
+    pending = db.execute(
+        select(Task).where(
+            Task.user_id == user_id,
+            Task.status != "done",
+            Task.week_start <= current_monday,
+        )
+    ).scalars().all()
+    if not pending:
+        return {"in_pendencias": 0, "moved_to_next_week": 0}
+
+    by_id = {str(t.id): t for t in pending}
+    pend_blocks = _pendencias_blocks(db, user_id, current_monday, now)
+
+    placed_ids: set[str] = set()
+    if pend_blocks:
+        result = pack_any(pend_blocks, [_sched_task(t) for t in pending])
+        for a in result.assignments:
+            t = by_id[a.task_id]
+            if t.rolled_from_week is None:
+                t.rolled_from_week = t.week_start
+            t.is_late = True
+            t.week_start = current_monday
+            t.scheduled_start = a.start
+            t.scheduled_end = a.end
+            placed_ids.add(a.task_id)
+
+    moved = 0
+    for t in pending:
+        if str(t.id) in placed_ids:
+            continue
+        if t.rolled_from_week is None:
+            t.rolled_from_week = t.week_start
+        t.is_late = True
+        t.week_start = next_monday
+        t.scheduled_start = None
+        t.scheduled_end = None
+        moved += 1
+    db.commit()
+
+    if moved:
+        try:
+            organize_week(db, user_id, next_monday, only_unscheduled=True, not_before=now)
+        except Exception:  # noqa: BLE001
+            db.rollback()
+
+    return {"in_pendencias": len(placed_ids), "moved_to_next_week": moved}
+
+
+def rollover_monday(db: Session, user_id: uuid.UUID, now: datetime | None = None) -> dict:
+    """Rollover de segunda (00h01).
+
+    Traz para a semana atual as pendências que ficaram incompletas em semanas
+    anteriores (inclui o que sobrou no bloco de pendências do sábado), marcando
+    como atrasadas e reorganizando nos horários da semana.
+
+    Args:
+        db: Sessão do banco.
+        user_id: Usuário a processar.
+        now: Momento de referência (usa :func:`now_local` se omitido).
+
+    Returns:
+        ``{"rolled_into_current_week": int}``.
     """
     now = now or now_local()
     current_monday = monday_of(now.date())
 
     tasks = db.execute(
-        select(Task).where(Task.user_id == user_id, Task.status != "done")
+        select(Task).where(
+            Task.user_id == user_id,
+            Task.status != "done",
+            Task.week_start < current_monday,
+        )
     ).scalars().all()
 
     rolled = 0
     for t in tasks:
-        if t.week_start < current_monday:
-            if t.rolled_from_week is None:
-                t.rolled_from_week = t.week_start
-            t.week_start = current_monday
-            t.is_late = True
-            t.scheduled_start = None
-            t.scheduled_end = None
-            rolled += 1
-        elif t.week_start == current_monday:
-            if t.scheduled_end is not None and t.scheduled_end < now:
-                t.scheduled_start = None
-                t.scheduled_end = None
+        if t.rolled_from_week is None:
+            t.rolled_from_week = t.week_start
+        t.week_start = current_monday
+        t.is_late = True
+        t.scheduled_start = None
+        t.scheduled_end = None
+        rolled += 1
     db.commit()
 
-    try:
-        organize_week(db, user_id, current_monday, only_unscheduled=True, not_before=now)
-    except Exception:  # noqa: BLE001
-        db.rollback()
+    if rolled:
+        try:
+            organize_week(db, user_id, current_monday, only_unscheduled=True, not_before=now)
+        except Exception:  # noqa: BLE001
+            db.rollback()
 
-    return {"rolled_from_previous_weeks": rolled}
+    return {"rolled_into_current_week": rolled}

@@ -19,6 +19,7 @@ from urllib.parse import quote
 import httpx
 
 from ..config import settings
+from .scheduling import normalize_subject
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
@@ -73,32 +74,45 @@ def get_access_token(refresh_token: str) -> str:
 def classify_event(title: str) -> tuple[str, str | None]:
     """Classifica um evento pelo título.
 
+    Regras (ignorando acentos):
+
+    * contém "pendencias" -> ``pendencias`` (bloco de pendências do sábado);
+    * título em minúsculas -> ``estudo`` (inclui "simulado ...", que só recebe
+      tarefas de simulado);
+    * título em MAIÚSCULAS com "simulado" -> ``simulado`` (sessão fixa);
+    * título em MAIÚSCULAS -> ``aula`` (bloco fixo);
+    * misto com "simulado" -> ``simulado``;
+    * misto/indefinido -> ``outro``.
+
     Args:
         title: Título do evento na agenda.
 
     Returns:
-        A tupla ``(kind, subject)``, onde ``kind`` é um de
-        ``aula``/``estudo``/``simulado``/``outro`` e ``subject`` é o título
-        original quando relevante (senão ``None``).
+        A tupla ``(kind, subject)``; ``subject`` é o título original quando
+        relevante (senão ``None``).
     """
     t = (title or "").strip()
     if not t:
         return "outro", None
-    low = t.lower()
-    if "simulado" in low:
-        return "simulado", None
-
     letters = [c for c in t if c.isalpha()]
     if not letters:
         return "outro", None
 
+    norm = normalize_subject(t)
+    if "pendencias" in norm:
+        return "pendencias", t
+
     is_upper = all(c.isupper() for c in letters)
     is_lower = all(c.islower() for c in letters)
 
-    if is_upper:
-        return "aula", t
     if is_lower:
         return "estudo", t
+    if is_upper:
+        if "simulado" in norm:
+            return "simulado", None
+        return "aula", t
+    if "simulado" in norm:
+        return "simulado", None
     return "outro", t
 
 
@@ -186,5 +200,9 @@ def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime)
     access_token = get_access_token(refresh_token)
     events: list[dict] = []
     for calendar_id in _list_calendar_ids(access_token):
-        events.extend(_events_for_calendar(access_token, calendar_id, time_min, time_max))
+        try:
+            events.extend(_events_for_calendar(access_token, calendar_id, time_min, time_max))
+        except GoogleCalendarError:
+            # Ignora um calendário problemático e mantém os demais.
+            continue
     return events

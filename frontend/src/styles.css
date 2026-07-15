@@ -516,6 +516,7 @@ label.fld > input, label.fld > select { font-weight: 450; color: var(--ink); }
 .ev.simulado { background: linear-gradient(180deg, color-mix(in oklch, var(--simulado) 86%, #fff), var(--simulado)); }
 .ev.estudo { background: linear-gradient(180deg, color-mix(in oklch, var(--estudo) 86%, #fff), var(--estudo)); }
 .ev.outro { background: linear-gradient(180deg, color-mix(in oklch, var(--outro) 88%, #fff), var(--outro)); }
+.ev.pendencias { background: linear-gradient(180deg, color-mix(in oklch, var(--late) 86%, #fff), var(--late)); }
 
 .ev.task {
   background: var(--card); color: var(--ink);

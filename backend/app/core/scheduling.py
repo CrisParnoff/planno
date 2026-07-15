@@ -31,6 +31,11 @@ def normalize_subject(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def is_simulado(text: str) -> bool:
+    """Indica se um texto (título de bloco ou tarefa) cita "simulado"."""
+    return "simulado" in normalize_subject(text)
+
+
 @dataclass
 class StudyBlock:
     """Intervalo livre de estudo vindo da agenda.
@@ -64,11 +69,14 @@ class SchedTask:
         id: Identificador da tarefa.
         duration_min: Duração em minutos.
         subject_key: Etiqueta normalizada, ou "" quando sem etiqueta.
+        is_simulado: Se a tarefa cita "simulado" (só ela entra em blocos de
+            simulado).
     """
 
     id: str
     duration_min: int
     subject_key: str
+    is_simulado: bool = False
 
 
 @dataclass
@@ -145,6 +153,9 @@ def organize(
         3. Sem bloco da matéria e com ``allow_generic_fallback``, tenta blocos
            genéricos (cuja matéria não corresponde a nenhuma etiqueta).
 
+    Blocos de simulado (título com "simulado") só recebem tarefas de simulado, e
+    tarefas de simulado só entram em blocos de simulado.
+
     Args:
         blocks: Blocos de estudo disponíveis.
         tasks: Tarefas a alocar.
@@ -158,24 +169,35 @@ def organize(
     blocks_sorted = sorted(blocks, key=lambda b: b.start)
     remaining = [b.capacity_min for b in blocks_sorted]
     cursor = [b.start for b in blocks_sorted]
+    sim_block = [is_simulado(b.subject) for b in blocks_sorted]
 
-    task_subject_keys = {t.subject_key for t in tasks if t.subject_key}
+    # Blocos genéricos são os NÃO-simulado cuja matéria não bate com nenhuma
+    # tarefa comum (não-simulado).
+    common_subject_keys = {t.subject_key for t in tasks if t.subject_key and not t.is_simulado}
     generic_block_idx = {
         i for i, b in enumerate(blocks_sorted)
-        if b.subject_key not in task_subject_keys
+        if not sim_block[i] and b.subject_key not in common_subject_keys
     }
 
     result = ScheduleResult()
 
     for task in sorted(tasks, key=lambda t: t.duration_min, reverse=True):
-        candidate_idxs = [
-            i for i, b in enumerate(blocks_sorted)
-            if b.subject_key == task.subject_key and remaining[i] >= task.duration_min
-        ]
-        if not candidate_idxs and allow_generic_fallback:
+        if task.is_simulado:
             candidate_idxs = [
-                i for i in generic_block_idx if remaining[i] >= task.duration_min
+                i for i in range(len(blocks_sorted))
+                if sim_block[i] and remaining[i] >= task.duration_min
             ]
+        else:
+            candidate_idxs = [
+                i for i, b in enumerate(blocks_sorted)
+                if not sim_block[i]
+                and b.subject_key == task.subject_key
+                and remaining[i] >= task.duration_min
+            ]
+            if not candidate_idxs and allow_generic_fallback:
+                candidate_idxs = [
+                    i for i in generic_block_idx if remaining[i] >= task.duration_min
+                ]
 
         if not candidate_idxs:
             result.unscheduled.append(task.id)
@@ -195,4 +217,42 @@ def organize(
         cursor[best] = end
         remaining[best] -= task.duration_min
 
+    return result
+
+
+def pack_any(blocks: list[StudyBlock], tasks: list[SchedTask]) -> ScheduleResult:
+    """Aloca tarefas em quaisquer blocos por capacidade, ignorando a matéria.
+
+    Usado no bloco de "pendências" do sábado, que aceita qualquer tarefa
+    pendente. Segue a mesma heurística: tarefas mais longas primeiro, no bloco
+    que deixa a menor sobra.
+
+    Returns:
+        O resultado com as alocações e as tarefas que não couberam.
+    """
+    blocks_sorted = sorted(blocks, key=lambda b: b.start)
+    remaining = [b.capacity_min for b in blocks_sorted]
+    cursor = [b.start for b in blocks_sorted]
+
+    result = ScheduleResult()
+    for task in sorted(tasks, key=lambda t: t.duration_min, reverse=True):
+        candidate_idxs = [
+            i for i in range(len(blocks_sorted)) if remaining[i] >= task.duration_min
+        ]
+        if not candidate_idxs:
+            result.unscheduled.append(task.id)
+            continue
+        best = min(candidate_idxs, key=lambda i: remaining[i] - task.duration_min)
+        start = cursor[best]
+        end = start + timedelta(minutes=task.duration_min)
+        result.assignments.append(
+            Assignment(
+                task_id=task.id,
+                start=start,
+                end=end,
+                block_subject=blocks_sorted[best].subject,
+            )
+        )
+        cursor[best] = end
+        remaining[best] -= task.duration_min
     return result
