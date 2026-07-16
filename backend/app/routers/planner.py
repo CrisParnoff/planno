@@ -207,6 +207,7 @@ def create_study_block(
         start_min=_hhmm_to_min(payload.start),
         end_min=_hhmm_to_min(payload.end),
         subject=payload.subject.strip(),
+        kind=payload.kind,
     )
     db.add(entity)
     db.commit()

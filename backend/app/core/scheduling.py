@@ -158,7 +158,8 @@ def organize(
     Estratégia:
         1. Ordena as tarefas por duração decrescente.
         2. Para cada tarefa, escolhe o bloco da mesma matéria com capacidade
-           suficiente que deixa a menor sobra (best-fit).
+           suficiente que começa **mais cedo** (earliest-fit), preenchendo a
+           agenda do início para o fim.
         3. Sem bloco da matéria e com ``allow_generic_fallback``, tenta blocos
            genéricos (cuja matéria não corresponde a nenhuma etiqueta).
 
@@ -212,7 +213,7 @@ def organize(
             result.unscheduled.append(task.id)
             continue
 
-        best = min(candidate_idxs, key=lambda i: remaining[i] - task.duration_min)
+        best = min(candidate_idxs, key=lambda i: cursor[i])
         start = cursor[best]
         end = start + timedelta(minutes=task.duration_min)
         result.assignments.append(
@@ -234,7 +235,7 @@ def pack_any(blocks: list[StudyBlock], tasks: list[SchedTask]) -> ScheduleResult
 
     Usado no bloco de "pendências" do sábado, que aceita qualquer tarefa
     pendente. Segue a mesma heurística: tarefas mais longas primeiro, no bloco
-    que deixa a menor sobra.
+    disponível mais cedo (earliest-fit).
 
     Returns:
         O resultado com as alocações e as tarefas que não couberam.
@@ -251,7 +252,7 @@ def pack_any(blocks: list[StudyBlock], tasks: list[SchedTask]) -> ScheduleResult
         if not candidate_idxs:
             result.unscheduled.append(task.id)
             continue
-        best = min(candidate_idxs, key=lambda i: remaining[i] - task.duration_min)
+        best = min(candidate_idxs, key=lambda i: cursor[i])
         start = cursor[best]
         end = start + timedelta(minutes=task.duration_min)
         result.assignments.append(

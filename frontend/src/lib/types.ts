@@ -116,6 +116,7 @@ export interface StudyBlock {
   start: string;   // "HH:MM"
   end: string;     // "HH:MM"
   subject: string;
+  kind: OverrideKind; // estudo | aula | outro
 }
 
 export interface WeekView {

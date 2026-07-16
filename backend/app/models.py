@@ -171,7 +171,8 @@ class StudyBlock(Base):
         weekday: Dia da semana (0=segunda ... 6=domingo).
         start_min: Início em minutos desde 00:00.
         end_min: Fim em minutos desde 00:00.
-        subject: Matéria (casa com uma etiqueta).
+        subject: Matéria (estudo) ou nome (aula/outro).
+        kind: "estudo", "aula" ou "outro". Só "estudo" recebe tarefas.
     """
 
     __tablename__ = "study_blocks"
@@ -182,6 +183,7 @@ class StudyBlock(Base):
     start_min: Mapped[int] = mapped_column(Integer, nullable=False)
     end_min: Mapped[int] = mapped_column(Integer, nullable=False)
     subject: Mapped[str] = mapped_column(String(80), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="estudo")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

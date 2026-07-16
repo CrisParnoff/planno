@@ -279,12 +279,22 @@ def _min_to_hhmm(v: int) -> str:
 
 
 class StudyBlockCreate(BaseModel):
-    """Dados para criar um bloco de estudo recorrente."""
+    """Dados para criar um bloco recorrente (estudo, aula ou outro)."""
 
     weekday: int = Field(ge=0, le=6, description="0=segunda ... 6=domingo")
     start: str = Field(pattern=r"^\d{2}:\d{2}$")
     end: str = Field(pattern=r"^\d{2}:\d{2}$")
     subject: str = Field(min_length=1, max_length=80)
+    kind: str = "estudo"
+
+    @field_validator("kind")
+    @classmethod
+    def _valid_kind(cls, v):
+        """Valida o tipo do bloco."""
+        v = str(v).strip().lower()
+        if v not in ("estudo", "aula", "outro"):
+            raise ValueError("kind deve ser 'estudo', 'aula' ou 'outro'.")
+        return v
 
     @field_validator("end")
     @classmethod
@@ -297,13 +307,14 @@ class StudyBlockCreate(BaseModel):
 
 
 class StudyBlockOut(BaseModel):
-    """Bloco de estudo serializado, com horários em "HH:MM"."""
+    """Bloco recorrente serializado, com horários em "HH:MM"."""
 
     id: str
     weekday: int
     start: str
     end: str
     subject: str
+    kind: str
 
     @classmethod
     def from_entity(cls, e) -> "StudyBlockOut":
@@ -314,4 +325,5 @@ class StudyBlockOut(BaseModel):
             start=_min_to_hhmm(e.start_min),
             end=_min_to_hhmm(e.end_min),
             subject=e.subject,
+            kind=getattr(e, "kind", "estudo") or "estudo",
         )

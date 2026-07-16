@@ -19,6 +19,7 @@ export interface StudyBlockDraft {
   start: string; // HH:MM
   end: string;
   subject: string;
+  kind: OverrideKind; // estudo | aula | outro
 }
 
 export function StudyBlockDialog({
@@ -36,6 +37,7 @@ export function StudyBlockDialog({
   onSave: (draft: StudyBlockDraft) => Promise<void>;
   onDelete?: () => Promise<void>;
 }) {
+  const [kind, setKind] = useState<OverrideKind>(initial.kind ?? "estudo");
   const [weekday, setWeekday] = useState(initial.weekday);
   const [start, setStart] = useState(initial.start);
   const [end, setEnd] = useState(initial.end);
@@ -46,12 +48,13 @@ export function StudyBlockDialog({
 
   const submit = async () => {
     setErr("");
-    const subj = (subject === "__new__" ? newSubject : subject).trim();
-    if (!subj) return setErr("Escolha ou crie uma matéria.");
+    const subj = (kind === "estudo" && subject === "__new__" ? newSubject : subject).trim();
+    if (!subj)
+      return setErr(kind === "estudo" ? "Escolha ou crie uma matéria." : "Dê um nome ao horário.");
     if (!start || !end || end <= start) return setErr("O fim deve ser depois do início.");
     setBusy(true);
     try {
-      await onSave({ weekday, start, end, subject: subj });
+      await onSave({ weekday, start, end, subject: subj, kind });
       onClose();
     } catch (e) {
       setErr((e as Error).message);
@@ -73,8 +76,8 @@ export function StudyBlockDialog({
 
   return (
     <Modal
-      title={mode === "create" ? "Reservar horário de estudo" : "Editar bloco de estudo"}
-      subtitle="Este bloco se repete toda semana no mesmo dia e horário."
+      title={mode === "create" ? "Reservar horário" : "Editar horário"}
+      subtitle="Este horário se repete toda semana no mesmo dia."
       onClose={onClose}
       footer={
         <>
@@ -94,25 +97,46 @@ export function StudyBlockDialog({
     >
       <div className="frm">
         <label className="fld">
-          Matéria
-          <select value={subject} onChange={(e) => setSubject(e.target.value)}>
-            <option value="">Escolher…</option>
-            {labels.map((l) => (
-              <option key={l.id} value={l.name}>
-                {l.name}
-              </option>
-            ))}
-            <option value="__new__">+ Nova matéria…</option>
+          Tipo
+          <select value={kind} onChange={(e) => setKind(e.target.value as OverrideKind)}>
+            <option value="estudo">Estudo / Tarefas</option>
+            <option value="aula">Aula</option>
+            <option value="outro">Outro compromisso</option>
           </select>
         </label>
-        {subject === "__new__" && (
+        {kind === "estudo" ? (
+          <>
+            <label className="fld">
+              Matéria
+              <select value={subject} onChange={(e) => setSubject(e.target.value)}>
+                <option value="">Escolher…</option>
+                {labels.map((l) => (
+                  <option key={l.id} value={l.name}>
+                    {l.name}
+                  </option>
+                ))}
+                <option value="__new__">+ Nova matéria…</option>
+              </select>
+            </label>
+            {subject === "__new__" && (
+              <label className="fld">
+                Nome da nova matéria
+                <input
+                  value={newSubject}
+                  onChange={(e) => setNewSubject(e.target.value)}
+                  placeholder="ex.: Química"
+                  autoFocus
+                />
+              </label>
+            )}
+          </>
+        ) : (
           <label className="fld">
-            Nome da nova matéria
+            Nome
             <input
-              value={newSubject}
-              onChange={(e) => setNewSubject(e.target.value)}
-              placeholder="ex.: Química"
-              autoFocus
+              value={subject === "__new__" ? "" : subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder={kind === "aula" ? "ex.: Química (aula)" : "ex.: Academia"}
             />
           </label>
         )}
@@ -136,6 +160,11 @@ export function StudyBlockDialog({
             <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
           </label>
         </div>
+        <p className="small muted" style={{ margin: 0 }}>
+          {kind === "estudo"
+            ? "Recebe as tarefas da matéria correspondente."
+            : "Fica reservado — não recebe tarefas."}
+        </p>
         {err && <p className="error" style={{ margin: 0 }}>{err}</p>}
       </div>
     </Modal>

@@ -184,6 +184,7 @@ create table if not exists public.study_blocks (
     start_min   integer not null check (start_min between 0 and 1439),
     end_min     integer not null check (end_min between 1 and 1440),
     subject     varchar(80) not null,
+    kind        varchar(20) not null default 'estudo' check (kind in ('estudo', 'aula', 'outro')),
     created_at  timestamptz not null default now()
 );
 create index if not exists idx_study_blocks_user on public.study_blocks(user_id);

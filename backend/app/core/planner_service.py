@@ -205,7 +205,7 @@ def db_study_block_events(db: Session, user_id: uuid.UUID, week_start: date) -> 
                 "title": r.subject,
                 "start": start.isoformat(),
                 "end": end.isoformat(),
-                "kind": "estudo",
+                "kind": getattr(r, "kind", "estudo") or "estudo",
                 "subject": r.subject,
             }
         )

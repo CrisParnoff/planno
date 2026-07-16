@@ -201,6 +201,7 @@ export const api = {
     start: string;
     end: string;
     subject: string;
+    kind: OverrideKind;
   }) => request<StudyBlock>("/api/planner/study-blocks", json(body)),
   deleteStudyBlock: (id: string) =>
     request<void>(`/api/planner/study-blocks/${id}`, { method: "DELETE" }),

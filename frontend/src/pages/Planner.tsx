@@ -169,6 +169,7 @@ export default function Planner() {
         start: minToHHMM(sel.startMin),
         end: minToHHMM(sel.endMin),
         subject: "",
+        kind: "estudo",
       },
     });
   };
@@ -373,7 +374,7 @@ export default function Planner() {
       {/* ---- Blocos de estudo cadastrados ---- */}
       {blocks.length > 0 && (
         <div className="card">
-          <strong>Horários de estudo recorrentes</strong>
+          <strong>Horários recorrentes</strong>
           <p className="small muted" style={{ margin: "4px 0 8px" }}>
             Repetem toda semana. Clique para editar — ou arraste na agenda para criar novos.
           </p>
@@ -410,6 +411,7 @@ export default function Planner() {
             start: dialog.block.start,
             end: dialog.block.end,
             subject: dialog.block.subject,
+            kind: dialog.block.kind,
           }}
           labels={labels}
           onClose={() => setDialog(null)}
