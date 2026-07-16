@@ -365,6 +365,46 @@ def organize_week(
     return {"scheduled": len(scheduled_ids), "unscheduled": result.unscheduled}
 
 
+def spillover_to_next_week(
+    db: Session, user_id: uuid.UUID, week_start: date, task_ids: list[str]
+) -> dict:
+    """Move as tarefas informadas para a semana seguinte e organiza-as lá.
+
+    Usado quando não há horário na semana atual e o usuário opta por alocar na
+    próxima. As tarefas não são marcadas como atrasadas (é planejamento, não
+    atraso).
+
+    Returns:
+        ``{"moved": int, "next_week_start": str, "scheduled": int,
+        "unscheduled": list[str]}``.
+    """
+    ws = monday_of(week_start)
+    next_ws = ws + timedelta(days=7)
+    wanted = set(task_ids)
+
+    rows = db.execute(
+        select(Task).where(Task.user_id == user_id, Task.week_start == ws)
+    ).scalars().all()
+
+    moved: list[str] = []
+    for t in rows:
+        if t.status == "done":
+            continue
+        if str(t.id) in wanted:
+            t.week_start = next_ws
+            t.scheduled_start = None
+            t.scheduled_end = None
+            moved.append(str(t.id))
+    db.commit()
+
+    result = (
+        organize_week(db, user_id, next_ws, task_ids=moved)
+        if moved
+        else {"scheduled": 0, "unscheduled": []}
+    )
+    return {"moved": len(moved), "next_week_start": next_ws.isoformat(), **result}
+
+
 def rollover_saturday(db: Session, user_id: uuid.UUID, now: datetime | None = None) -> dict:
     """Rollover de sábado (00h01).
 

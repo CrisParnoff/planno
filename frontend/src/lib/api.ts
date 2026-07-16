@@ -180,6 +180,13 @@ export const api = {
       "/api/planner/organize",
       json({ week_start: weekStart, task_ids: taskIds ?? null })
     ),
+  spillover: (weekStart: string, taskIds: string[]) =>
+    request<{
+      moved: number;
+      next_week_start: string;
+      scheduled: number;
+      unscheduled: string[];
+    }>("/api/planner/spillover", json({ week_start: weekStart, task_ids: taskIds })),
   weekView: (weekStart: string) =>
     request<WeekView>(`/api/planner/week?week_start=${weekStart}`),
   setEventKind: (eventId: string, kind: OverrideKind) =>

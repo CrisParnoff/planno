@@ -16,6 +16,7 @@ from ..core.planner_service import (
     now_local,
     organize_week,
     rollover_monday,
+    spillover_to_next_week,
 )
 from ..database import get_db
 from ..models import EventOverride, Label, StudyBlock, Task
@@ -280,6 +281,18 @@ def week_view(
         "has_study_time": any(e["kind"] == "estudo" for e in events),
         "server_now": now.isoformat(),
     }
+
+
+@router.post("/spillover")
+def spillover(
+    payload: OrganizeIn,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Move as tarefas informadas para a próxima semana e as organiza lá."""
+    return spillover_to_next_week(
+        db, uuid.UUID(user.id), payload.week_start, payload.task_ids or []
+    )
 
 
 @router.post("/event-kind")

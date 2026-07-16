@@ -4,6 +4,7 @@ import type { CalendarEvent, Label, StudyBlock, Task, WeekView } from "../lib/ty
 import { addDays, fmtDateLong, mondayOf, toISODate } from "../lib/week";
 import WeekCalendar, { minToHHMM, type SlotSelection } from "../components/WeekCalendar";
 import { EventInfoDialog, StudyBlockDialog, TaskDialog, type StudyBlockDraft } from "../components/dialogs";
+import Modal from "../components/Modal";
 
 const DURATIONS = [15, 30, 45, 60];
 
@@ -12,6 +13,7 @@ type Dialog =
   | { type: "edit-block"; block: StudyBlock }
   | { type: "task"; task: Task }
   | { type: "event"; ev: CalendarEvent }
+  | { type: "spillover"; taskIds: string[] }
   | null;
 
 export default function Planner() {
@@ -101,6 +103,28 @@ export default function Planner() {
           (r.unscheduled.length ? `, ${r.unscheduled.length} sem espaço.` : ".")
       );
       load();
+      if (r.unscheduled.length > 0) {
+        setDialog({ type: "spillover", taskIds: r.unscheduled });
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmSpillover = async () => {
+    if (dialog?.type !== "spillover") return;
+    const ids = dialog.taskIds;
+    setDialog(null);
+    setErr("");
+    setBusy(true);
+    try {
+      const r = await api.spillover(iso, ids);
+      setMsg(
+        `Movi ${r.moved} tarefa(s) para a próxima semana — ${r.scheduled} alocada(s) lá.`
+      );
+      setWeekStart(addDays(weekStart, 7)); // navega para a próxima semana
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -421,6 +445,26 @@ export default function Planner() {
             load();
           }}
         />
+      )}
+      {dialog?.type === "spillover" && (
+        <Modal
+          title="Sem horário nesta semana"
+          subtitle={`${dialog.taskIds.length} tarefa(s) não couberam nos horários de estudo desta semana.`}
+          onClose={() => setDialog(null)}
+          footer={
+            <>
+              <button onClick={() => setDialog(null)}>Agora não</button>
+              <button className="primary push" onClick={confirmSpillover} disabled={busy}>
+                Alocar na próxima semana
+              </button>
+            </>
+          }
+        >
+          <p className="small muted">
+            Quer alocar essas tarefas na próxima semana? Elas serão movidas para a
+            semana seguinte e organizadas nos horários de estudo de lá.
+          </p>
+        </Modal>
       )}
     </div>
   );
