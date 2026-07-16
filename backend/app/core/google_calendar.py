@@ -19,7 +19,7 @@ from urllib.parse import quote
 import httpx
 
 from ..config import settings
-from .scheduling import normalize_subject
+from .scheduling import COMMON_SUBJECT_KEYS, normalize_subject
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
@@ -71,14 +71,30 @@ def get_access_token(refresh_token: str) -> str:
     return token
 
 
-def classify_event(title: str) -> tuple[str, str | None]:
+def _looks_like_study(norm: str, subject_keys: frozenset[str]) -> bool:
+    """Indica se um título minúsculo é de estudo.
+
+    É estudo quando cita "estudo" ou contém, como palavra, o nome de alguma
+    matéria (etiquetas do usuário + matérias comuns).
+    """
+    if "estudo" in norm:
+        return True
+    words = set(norm.split())
+    keys = subject_keys | COMMON_SUBJECT_KEYS
+    return any(sk in words for sk in keys)
+
+
+def classify_event(
+    title: str, subject_keys: frozenset[str] = frozenset()
+) -> tuple[str, str | None]:
     """Classifica um evento pelo título.
 
     Regras (ignorando acentos):
 
     * contém "pendencias" -> ``pendencias`` (bloco de pendências do sábado);
-    * título em minúsculas -> ``estudo`` (inclui "simulado ...", que só recebe
-      tarefas de simulado);
+    * título em minúsculas **com nome de matéria ou "estudo"** -> ``estudo``
+      (inclui "simulado ...", que só recebe tarefas de simulado);
+    * título em minúsculas sem matéria -> ``outro`` (não recebe tarefas);
     * título em MAIÚSCULAS com "simulado" -> ``simulado`` (sessão fixa);
     * título em MAIÚSCULAS -> ``aula`` (bloco fixo);
     * misto com "simulado" -> ``simulado``;
@@ -86,6 +102,7 @@ def classify_event(title: str) -> tuple[str, str | None]:
 
     Args:
         title: Título do evento na agenda.
+        subject_keys: Matérias do usuário, já normalizadas.
 
     Returns:
         A tupla ``(kind, subject)``; ``subject`` é o título original quando
@@ -106,7 +123,9 @@ def classify_event(title: str) -> tuple[str, str | None]:
     is_lower = all(c.islower() for c in letters)
 
     if is_lower:
-        return "estudo", t
+        if _looks_like_study(norm, subject_keys):
+            return "estudo", t
+        return "outro", t
     if is_upper:
         if "simulado" in norm:
             return "simulado", None
@@ -138,7 +157,11 @@ def _list_calendar_ids(access_token: str) -> list[str]:
 
 
 def _events_for_calendar(
-    access_token: str, calendar_id: str, time_min: datetime, time_max: datetime
+    access_token: str,
+    calendar_id: str,
+    time_min: datetime,
+    time_max: datetime,
+    subject_keys: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Lista os eventos de um único calendário no intervalo informado.
 
@@ -167,7 +190,7 @@ def _events_for_calendar(
         if not start or not end:
             continue
         title = item.get("summary", "")
-        kind, subject = classify_event(title)
+        kind, subject = classify_event(title, subject_keys)
         events.append(
             {
                 "id": item.get("id"),
@@ -181,13 +204,19 @@ def _events_for_calendar(
     return events
 
 
-def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime) -> list[dict]:
+def list_week_events(
+    refresh_token: str,
+    time_min: datetime,
+    time_max: datetime,
+    subject_keys: frozenset[str] = frozenset(),
+) -> list[dict]:
     """Lista os eventos de todos os calendários do usuário no intervalo.
 
     Args:
         refresh_token: Refresh token OAuth do usuário.
         time_min: Início do intervalo (datetime com timezone).
         time_max: Fim do intervalo (datetime com timezone).
+        subject_keys: Matérias do usuário, para reconhecer blocos de estudo.
 
     Returns:
         Eventos de todos os calendários visíveis, cada um com ``id``, ``title``,
@@ -201,7 +230,9 @@ def list_week_events(refresh_token: str, time_min: datetime, time_max: datetime)
     events: list[dict] = []
     for calendar_id in _list_calendar_ids(access_token):
         try:
-            events.extend(_events_for_calendar(access_token, calendar_id, time_min, time_max))
+            events.extend(
+                _events_for_calendar(access_token, calendar_id, time_min, time_max, subject_keys)
+            )
         except GoogleCalendarError:
             # Ignora um calendário problemático e mantém os demais.
             continue

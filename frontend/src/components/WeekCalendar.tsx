@@ -184,6 +184,13 @@ export default function WeekCalendar({
 
   const hours = Array.from({ length: 24 }, (_, h) => h);
 
+  // Início dos blocos de estudo (zonas), para empurrar levemente a tarefa que
+  // cai no topo do bloco e não cobrir o título do horário.
+  const zoneStarts = useMemo(
+    () => blocks.filter((b) => b.zone).map((b) => ({ day: b.dayIdx, start: b.startMin })),
+    [blocks]
+  );
+
   return (
     <div className="cal-shell" style={{ ["--hour-px" as string]: `${HOUR_PX}px` }}>
       <div className="cal-scroll" ref={scrollRef}>
@@ -254,12 +261,21 @@ export default function WeekCalendar({
               {blocks
                 .filter((b) => b.dayIdx === di && !b.zone)
                 .map((b) => {
-                  const h = Math.max(18, ((b.endMin - b.startMin) / 60) * HOUR_PX - 2);
+                  const baseH = Math.max(18, ((b.endMin - b.startMin) / 60) * HOUR_PX - 2);
+                  // Se a tarefa começa no topo de um bloco de estudo, desce um
+                  // pouco para o título do bloco continuar visível.
+                  const atZoneTop =
+                    b.payload.type === "task" &&
+                    zoneStarts.some(
+                      (z) => z.day === b.dayIdx && b.startMin - z.start >= 0 && b.startMin - z.start <= 5
+                    );
+                  const offset = atZoneTop ? 16 : 0;
+                  const h = Math.max(16, baseH - offset);
                   return (
                     <div
                       key={b.key}
                       className={"ev " + b.cls}
-                      style={{ top: (b.startMin / 60) * HOUR_PX, height: h }}
+                      style={{ top: (b.startMin / 60) * HOUR_PX + offset, height: h }}
                       title={`${b.title} · ${minToHHMM(b.startMin)}–${minToHHMM(b.endMin)}`}
                       role="button"
                       tabIndex={0}

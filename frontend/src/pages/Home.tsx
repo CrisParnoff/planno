@@ -158,7 +158,14 @@ export default function Home() {
       </div>
 
       {dialog?.type === "event" && (
-        <EventInfoDialog ev={dialog.ev} onClose={() => setDialog(null)} />
+        <EventInfoDialog
+          ev={dialog.ev}
+          onClose={() => setDialog(null)}
+          onSetKind={async (id, kind) => {
+            await api.setEventKind(id, kind);
+            load();
+          }}
+        />
       )}
       {dialog?.type === "task" && (
         <TaskDialog

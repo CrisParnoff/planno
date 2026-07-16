@@ -5,6 +5,7 @@ import type {
   ErrorEntryInput,
   ErrorOverview,
   Label,
+  OverrideKind,
   Simulado,
   StudyBlock,
   Task,
@@ -181,6 +182,11 @@ export const api = {
     ),
   weekView: (weekStart: string) =>
     request<WeekView>(`/api/planner/week?week_start=${weekStart}`),
+  setEventKind: (eventId: string, kind: OverrideKind) =>
+    request<{ event_id: string; kind: string }>(
+      "/api/planner/event-kind",
+      json({ event_id: eventId, kind })
+    ),
   // ---- blocos de estudo (criados no app) ----
   listStudyBlocks: () => request<StudyBlock[]>("/api/planner/study-blocks"),
   createStudyBlock: (body: {

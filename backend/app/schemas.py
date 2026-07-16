@@ -236,6 +236,22 @@ class CalendarEvent(BaseModel):
     subject: Optional[str] = None
 
 
+class EventKindIn(BaseModel):
+    """Override do tipo de um evento: estudo, aula ou outro."""
+
+    event_id: str = Field(min_length=1, max_length=512)
+    kind: str
+
+    @field_validator("kind")
+    @classmethod
+    def _valid_kind(cls, v):
+        """Valida o tipo escolhido."""
+        v = str(v).strip().lower()
+        if v not in ("estudo", "aula", "outro"):
+            raise ValueError("kind deve ser 'estudo', 'aula' ou 'outro'.")
+        return v
+
+
 class OrganizeIn(BaseModel):
     """Parâmetros do organizador de tarefas."""
 

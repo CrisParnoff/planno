@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Modal from "./Modal";
-import type { CalendarEvent, Label, Task } from "../lib/types";
+import type { CalendarEvent, Label, OverrideKind, Task } from "../lib/types";
 import { WEEKDAYS, fmtTime } from "../lib/week";
 
 const KIND_LABEL: Record<CalendarEvent["kind"], string> = {
@@ -287,34 +287,64 @@ export function TaskDialog({
 /* ============================================================
    Detalhes de evento da agenda (somente leitura)
    ============================================================ */
+const CHOICE_LABEL: Record<OverrideKind, string> = {
+  estudo: "Estudo / Tarefas",
+  aula: "Aula",
+  outro: "Outro compromisso",
+};
+const CHOICES: OverrideKind[] = ["estudo", "aula", "outro"];
+
+function initialChoice(kind: CalendarEvent["kind"]): OverrideKind {
+  if (kind === "estudo") return "estudo";
+  if (kind === "aula") return "aula";
+  return "outro";
+}
+
 export function EventInfoDialog({
   ev,
   onClose,
+  onSetKind,
 }: {
   ev: CalendarEvent;
   onClose: () => void;
+  onSetKind?: (eventId: string, kind: OverrideKind) => Promise<void>;
 }) {
+  const [sel, setSel] = useState<OverrideKind>(initialChoice(ev.kind));
+  const [busy, setBusy] = useState(false);
   const day = new Date(ev.start).toLocaleDateString("pt-BR", {
     weekday: "long",
     day: "2-digit",
     month: "2-digit",
   });
+
+  const save = async () => {
+    if (!onSetKind) return onClose();
+    setBusy(true);
+    try {
+      await onSetKind(ev.id, sel);
+      onClose();
+    } catch {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal
       title={ev.title}
-      subtitle="Evento importado da sua agenda — edite direto no Google Agenda."
+      subtitle="Evento da sua agenda. Ajuste o tipo se a leitura automática estiver errada."
       onClose={onClose}
       footer={
-        <button className="primary push" onClick={onClose}>
-          Fechar
-        </button>
+        <>
+          <button onClick={onClose}>Fechar</button>
+          {onSetKind && (
+            <button className="primary push" onClick={save} disabled={busy}>
+              {busy ? "Salvando…" : "Salvar"}
+            </button>
+          )}
+        </>
       }
     >
       <div className="info-rows">
-        <div className="ir">
-          <span className="k">Tipo</span>
-          <span className={"badge " + ev.kind}>{KIND_LABEL[ev.kind]}</span>
-        </div>
         <div className="ir">
           <span className="k">Dia</span>
           <span style={{ textTransform: "capitalize" }}>{day}</span>
@@ -332,6 +362,39 @@ export function EventInfoDialog({
           </div>
         )}
       </div>
+
+      {onSetKind ? (
+        <div style={{ marginTop: 14 }}>
+          <strong className="small">Tipo deste horário</strong>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 8 }}>
+            {CHOICES.map((k) => (
+              <label
+                key={k}
+                style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+              >
+                <input
+                  type="radio"
+                  name="ev-kind"
+                  checked={sel === k}
+                  onChange={() => setSel(k)}
+                />
+                {CHOICE_LABEL[k]}
+              </label>
+            ))}
+          </div>
+          <p className="small muted" style={{ marginTop: 8 }}>
+            Só “Estudo / Tarefas” recebe alocação de tarefas. Aula e outros
+            compromissos ficam reservados.
+          </p>
+        </div>
+      ) : (
+        <div className="info-rows" style={{ marginTop: 2 }}>
+          <div className="ir">
+            <span className="k">Tipo</span>
+            <span className={"badge " + ev.kind}>{KIND_LABEL[ev.kind]}</span>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -197,3 +197,27 @@ drop policy if exists study_blocks_update on public.study_blocks;
 create policy study_blocks_update on public.study_blocks for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists study_blocks_delete on public.study_blocks;
 create policy study_blocks_delete on public.study_blocks for delete using (auth.uid() = user_id);
+
+-- ---------------------------------------------------------------------
+-- OVERRIDE do tipo de um evento (estudo/aula/outro), definido no popup.
+-- ---------------------------------------------------------------------
+create table if not exists public.event_overrides (
+    id          uuid primary key default gen_random_uuid(),
+    user_id     uuid not null references auth.users(id) on delete cascade,
+    event_id    varchar(512) not null,
+    kind        varchar(20)  not null,
+    created_at  timestamptz  not null default now(),
+    unique (user_id, event_id),
+    constraint event_override_kind_valid check (kind in ('estudo', 'aula', 'outro'))
+);
+create index if not exists idx_event_overrides_user on public.event_overrides(user_id);
+
+alter table public.event_overrides enable row level security;
+drop policy if exists event_overrides_select on public.event_overrides;
+create policy event_overrides_select on public.event_overrides for select using (auth.uid() = user_id);
+drop policy if exists event_overrides_insert on public.event_overrides;
+create policy event_overrides_insert on public.event_overrides for insert with check (auth.uid() = user_id);
+drop policy if exists event_overrides_update on public.event_overrides;
+create policy event_overrides_update on public.event_overrides for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists event_overrides_delete on public.event_overrides;
+create policy event_overrides_delete on public.event_overrides for delete using (auth.uid() = user_id);

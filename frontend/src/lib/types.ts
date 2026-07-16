@@ -100,6 +100,9 @@ export interface CalendarEvent {
   subject: string | null;
 }
 
+// Tipos que o usuário pode escolher no popup (override).
+export type OverrideKind = "estudo" | "aula" | "outro";
+
 export interface WeekView {
   week_start: string;
   events: CalendarEvent[];

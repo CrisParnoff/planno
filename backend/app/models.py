@@ -183,3 +183,23 @@ class StudyBlock(Base):
     end_min: Mapped[int] = mapped_column(Integer, nullable=False)
     subject: Mapped[str] = mapped_column(String(80), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EventOverride(Base):
+    """Correção manual do tipo de um evento da agenda.
+
+    Sobrepõe a classificação automática pelo título. Só ``estudo`` recebe
+    alocação de tarefas; ``aula`` e ``outro`` são tratados como ocupados.
+
+    Attributes:
+        event_id: Id do evento (do Google) ou ``sb-<uuid>`` (bloco do app).
+        kind: "estudo", "aula" ou "outro".
+    """
+
+    __tablename__ = "event_overrides"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    event_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

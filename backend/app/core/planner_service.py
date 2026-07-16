@@ -21,7 +21,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import CalendarConnection, StudyBlock, Task
+from ..models import CalendarConnection, EventOverride, Label, StudyBlock, Task
 from .crypto import decrypt
 from .google_calendar import list_week_events
 from .scheduling import SchedTask
@@ -75,6 +75,36 @@ def _connection(db: Session, user_id: uuid.UUID) -> CalendarConnection | None:
     ).scalar_one_or_none()
 
 
+def _user_subject_keys(db: Session, user_id: uuid.UUID) -> frozenset[str]:
+    """Matérias do usuário (etiquetas) normalizadas, para reconhecer estudos."""
+    names = db.execute(
+        select(Label.name).where(Label.user_id == user_id)
+    ).scalars().all()
+    return frozenset(normalize_subject(n) for n in names)
+
+
+def _load_overrides(db: Session, user_id: uuid.UUID) -> dict[str, str]:
+    """Carrega os overrides de tipo do usuário: ``{event_id: kind}``."""
+    try:
+        rows = db.execute(
+            select(EventOverride.event_id, EventOverride.kind).where(
+                EventOverride.user_id == user_id
+            )
+        ).all()
+    except ProgrammingError:
+        db.rollback()
+        return {}
+    return {eid: kind for eid, kind in rows}
+
+
+def apply_overrides(db: Session, user_id: uuid.UUID, events: list[dict]) -> list[dict]:
+    """Aplica os overrides de tipo aos eventos (retorna cópias, sem mutar o cache)."""
+    overrides = _load_overrides(db, user_id)
+    if not overrides:
+        return events
+    return [{**e, "kind": overrides.get(e["id"], e["kind"])} for e in events]
+
+
 # Cache curto dos eventos por (usuário, semana). Evita bater no Google a cada
 # leitura da semana (o front chama /week a cada interação com tarefas).
 _EVENTS_TTL = 90  # segundos
@@ -112,7 +142,7 @@ def fetch_events(db: Session, user_id: uuid.UUID, week_start: date) -> list[dict
 
     refresh = decrypt(conn.refresh_token_encrypted)
     start, end = week_bounds(week_start)
-    events = list_week_events(refresh, start, end)
+    events = list_week_events(refresh, start, end, _user_subject_keys(db, user_id))
     _events_cache[key] = (events, _time.time() + _EVENTS_TTL)
     return events
 
@@ -128,21 +158,27 @@ def _trim(block: SchedBlock, not_before: datetime | None) -> SchedBlock | None:
     return block
 
 
-def _calendar_study_blocks(events: list[dict], not_before: datetime | None) -> list[SchedBlock]:
-    """Extrai os blocos de estudo (kind='estudo') dos eventos do Google."""
-    out: list[SchedBlock] = []
+def _study_blocks_and_busy(
+    events: list[dict], not_before: datetime | None
+) -> tuple[list[SchedBlock], list[tuple[datetime, datetime]]]:
+    """Separa os eventos em blocos de estudo e intervalos ocupados.
+
+    Eventos ``estudo`` viram blocos alocáveis; qualquer outro tipo (aula,
+    outro, simulado, pendências) vira intervalo ocupado — ou seja, aula e
+    outros compromissos nunca recebem tarefas.
+    """
+    study: list[SchedBlock] = []
+    busy: list[tuple[datetime, datetime]] = []
     for ev in events:
-        if ev["kind"] != "estudo":
-            continue
-        b = SchedBlock(
-            start=datetime.fromisoformat(ev["start"]),
-            end=datetime.fromisoformat(ev["end"]),
-            subject=ev["subject"] or "",
-        )
-        b = _trim(b, not_before)
-        if b and b.end > b.start:
-            out.append(b)
-    return out
+        start = datetime.fromisoformat(ev["start"])
+        end = datetime.fromisoformat(ev["end"])
+        if ev["kind"] == "estudo":
+            b = _trim(SchedBlock(start=start, end=end, subject=ev["subject"] or ""), not_before)
+            if b and b.end > b.start:
+                study.append(b)
+        else:
+            busy.append((start, end))
+    return study, busy
 
 
 def _db_study_rows(db: Session, user_id: uuid.UUID) -> list[StudyBlock]:
@@ -154,21 +190,6 @@ def _db_study_rows(db: Session, user_id: uuid.UUID) -> list[StudyBlock]:
     except ProgrammingError:
         db.rollback()
         return []
-
-
-def _db_study_blocks(
-    db: Session, user_id: uuid.UUID, week_start: date, not_before: datetime | None
-) -> list[SchedBlock]:
-    """Converte os blocos recorrentes do app em blocos concretos da semana."""
-    out: list[SchedBlock] = []
-    for r in _db_study_rows(db, user_id):
-        d = week_start + timedelta(days=r.weekday)
-        start = datetime.combine(d, time(r.start_min // 60, r.start_min % 60), tzinfo=TZ)
-        end = datetime.combine(d, time(r.end_min // 60, r.end_min % 60), tzinfo=TZ)
-        b = _trim(SchedBlock(start=start, end=end, subject=r.subject), not_before)
-        if b and b.end > b.start:
-            out.append(b)
-    return out
 
 
 def db_study_block_events(db: Session, user_id: uuid.UUID, week_start: date) -> list[dict]:
@@ -191,15 +212,19 @@ def db_study_block_events(db: Session, user_id: uuid.UUID, week_start: date) -> 
     return events
 
 
-def has_any_study_time(db: Session, user_id: uuid.UUID, week_start: date) -> bool:
-    """Indica se há algum bloco de estudo (Google ou app) na semana."""
-    if _db_study_rows(db, user_id):
-        return True
+def all_week_events(db: Session, user_id: uuid.UUID, week_start: date) -> list[dict]:
+    """Todos os eventos da semana (Google + app), já com overrides aplicados."""
     try:
-        events = fetch_events(db, user_id, week_start)
+        events = list(fetch_events(db, user_id, week_start))
     except Exception:  # noqa: BLE001
         events = []
-    return any(e["kind"] == "estudo" for e in events)
+    events += db_study_block_events(db, user_id, week_start)
+    return apply_overrides(db, user_id, events)
+
+
+def has_any_study_time(db: Session, user_id: uuid.UUID, week_start: date) -> bool:
+    """Indica se há algum bloco de estudo (Google ou app) na semana."""
+    return any(e["kind"] == "estudo" for e in all_week_events(db, user_id, week_start))
 
 
 def _label_key(task: Task) -> str:
@@ -290,13 +315,8 @@ def organize_week(
     now = now_local()
     not_before = max(not_before, now) if not_before is not None else now
 
-    try:
-        events = fetch_events(db, user_id, week_start)
-    except Exception:  # noqa: BLE001
-        events = []
-
-    blocks = _calendar_study_blocks(events, not_before) + _db_study_blocks(
-        db, user_id, week_start, not_before
+    study_blocks, ev_busy = _study_blocks_and_busy(
+        all_week_events(db, user_id, week_start), not_before
     )
 
     tasks = db.execute(
@@ -314,22 +334,16 @@ def organize_week(
             continue
         selected.append(t)
 
-    # Intervalos ocupados: tarefas mantidas com horário + eventos que não são
-    # blocos de estudo.
+    # Ocupado: eventos que não são de estudo (aula/outro/etc.) + tarefas
+    # mantidas com horário (não realocadas nesta rodada).
     selected_ids = {t.id for t in selected}
-    busy: list[tuple[datetime, datetime]] = []
+    busy = list(ev_busy)
     for t in tasks:
         if t.id in selected_ids:
             continue
         if t.scheduled_start is not None and t.scheduled_end is not None:
             busy.append((t.scheduled_start, t.scheduled_end))
-    for ev in events:
-        if ev["kind"] == "estudo":
-            continue
-        busy.append(
-            (datetime.fromisoformat(ev["start"]), datetime.fromisoformat(ev["end"]))
-        )
-    blocks = subtract_busy(blocks, busy)
+    blocks = subtract_busy(study_blocks, busy)
 
     sched_tasks = [_sched_task(t) for t in selected]
 

@@ -36,6 +36,15 @@ def is_simulado(text: str) -> bool:
     return "simulado" in normalize_subject(text)
 
 
+# Matérias comuns de vestibular, já normalizadas. Servem como base para
+# reconhecer um horário de estudo mesmo antes de o usuário criar as etiquetas.
+COMMON_SUBJECT_KEYS = frozenset({
+    "matematica", "portugues", "redacao", "literatura", "fisica", "quimica",
+    "biologia", "historia", "geografia", "filosofia", "sociologia", "ingles",
+    "espanhol", "artes", "atualidades", "gramatica", "simulado",
+})
+
+
 @dataclass
 class StudyBlock:
     """Intervalo livre de estudo vindo da agenda.

@@ -10,19 +10,18 @@ from sqlalchemy.orm import Session
 
 from ..core.google_calendar import GoogleCalendarError
 from ..core.planner_service import (
-    db_study_block_events,
+    all_week_events,
     effective_status,
-    fetch_events,
-    has_any_study_time,
     monday_of,
     now_local,
     organize_week,
     rollover_monday,
 )
 from ..database import get_db
-from ..models import Label, StudyBlock, Task
+from ..models import EventOverride, Label, StudyBlock, Task
 from ..schemas import (
     CalendarEvent,
+    EventKindIn,
     OrganizeIn,
     ReallocateIn,
     StudyBlockCreate,
@@ -268,12 +267,7 @@ def week_view(
     """
     uid = uuid.UUID(user.id)
     ws = monday_of(week_start)
-    try:
-        events = fetch_events(db, uid, ws)
-    except GoogleCalendarError:
-        events = []
-
-    events = events + db_study_block_events(db, uid, ws)
+    events = all_week_events(db, uid, ws)
 
     rows = db.execute(
         select(Task).where(Task.user_id == uid, Task.week_start == ws)
@@ -283,9 +277,34 @@ def week_view(
         "week_start": ws.isoformat(),
         "events": [CalendarEvent(**e).model_dump(mode="json") for e in events],
         "tasks": [_task_out(t, now).model_dump(mode="json") for t in rows],
-        "has_study_time": has_any_study_time(db, uid, ws),
+        "has_study_time": any(e["kind"] == "estudo" for e in events),
         "server_now": now.isoformat(),
     }
+
+
+@router.post("/event-kind")
+def set_event_kind(
+    payload: EventKindIn,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Define (override) o tipo de um evento: estudo, aula ou outro.
+
+    Sobrepõe a leitura automática do título. Aula e outros compromissos não
+    recebem tarefas.
+    """
+    uid = uuid.UUID(user.id)
+    existing = db.execute(
+        select(EventOverride).where(
+            EventOverride.user_id == uid, EventOverride.event_id == payload.event_id
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        db.add(EventOverride(user_id=uid, event_id=payload.event_id, kind=payload.kind))
+    else:
+        existing.kind = payload.kind
+    db.commit()
+    return {"event_id": payload.event_id, "kind": payload.kind}
 
 
 @router.post("/rollover")
